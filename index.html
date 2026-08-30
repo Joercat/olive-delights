@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Olive Delights</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!-- ==================== START SCREEN ==================== -->
+<div id="start-screen" class="menu-overlay">
+    <h1>🫒 OLIVE DELIGHTS 🫒</h1>
+    <h2>Escape the Nextbot</h2>
+    <div class="coins-display">💰 Coins: <span id="total-coins">0</span></div>
+
+    <div class="tab-buttons">
+        <button class="tab-btn active" onclick="showTab('play',this)">PLAY</button>
+        <button class="tab-btn" onclick="showTab('escape',this)">ESCAPE</button>
+        <button class="tab-btn" onclick="showTab('endless',this)">ENDLESS</button>
+        <button class="tab-btn" onclick="showTab('chaos',this)">CHAOS</button>
+        <button class="tab-btn" onclick="showTab('shop',this)">SHOP</button>
+        <button class="tab-btn" onclick="showTab('upgrades',this)">UPGRADES</button>
+        <button class="tab-btn" onclick="showTab('settings',this)">SETTINGS</button>
+    </div>
+
+    <!-- PLAY TAB -->
+    <div id="tab-play" class="tab-content active">
+        <div class="menu-section">
+            <h3>🏆 TOP 3 RUNS</h3>
+            <div class="highscores" id="highscores">
+                <span>1. --:--</span>
+                <span>2. --:--</span>
+                <span>3. --:--</span>
+            </div>
+        </div>
+        <div class="menu-section desktop-controls">
+            <p><strong>CONTROLS:</strong><br>
+            WASD - Move | <span id="sprint-key-display">SHIFT</span> - Sprint | SPACE - Jump<br>
+            ESC - Pause</p>
+        </div>
+        <div class="menu-section mobile-controls-info">
+            <p><strong>CONTROLS:</strong><br>
+            Joystick - Move | Swipe - Look<br>
+            ⚡ Sprint | 🦘 Jump</p>
+        </div>
+        <div class="menu-section">
+            <label><input type="checkbox" id="start-shield-toggle"> Start with Shield (5 coins)</label>
+        </div>
+        <button class="menu-btn" onclick="startGame()">START GAME</button>
+    </div>
+
+    <!-- ESCAPE TAB -->
+    <div id="tab-escape" class="tab-content">
+        <div class="menu-section">
+            <h3>🚪 ESCAPE MODE</h3>
+            <p>Find one of TWO exit doors per round!<br>
+            2x larger map, no minimap. +3 coins per escape!</p>
+        </div>
+        <div class="menu-section">
+            <h3>🏆 BEST STREAK</h3>
+            <div class="highscores">
+                <span id="escape-record">Best: 0 escapes</span>
+            </div>
+        </div>
+        <div class="menu-section">
+            <label><input type="checkbox" id="escape-shield-toggle"> Start with Shield (5 coins)</label>
+        </div>
+        <button class="menu-btn" onclick="startEscapeMode()">START ESCAPE MODE</button>
+    </div>
+
+    <!-- ENDLESS TAB -->
+    <div id="tab-endless" class="tab-content">
+        <div class="menu-section">
+            <h3>♾️ ENDLESS MODE</h3>
+            <p>Infinite procedural world. Doors spawn rarely.<br>
+            +3 coins per door. Smart AI. No minimap.</p>
+        </div>
+        <div class="menu-section">
+            <h3>🏆 BEST SCORE</h3>
+            <div class="highscores">
+                <span id="endless-record">Best: 0 doors</span>
+            </div>
+        </div>
+        <div class="menu-section">
+            <label><input type="checkbox" id="endless-shield-toggle"> Start with Shield (5 coins)</label>
+        </div>
+        <button class="menu-btn purple" onclick="startEndlessMode()">START ENDLESS MODE</button>
+    </div>
+
+    <!-- CHAOS TAB -->
+    <div id="tab-chaos" class="tab-content">
+        <div class="menu-section">
+            <h3>🔥 CHAOS MODE</h3>
+            <p>3 nextbots chase you at once!<br>
+            Coins worth 2x. Boosted powerups.<br>
+            How long can you survive?</p>
+        </div>
+        <div class="menu-section">
+            <h3>🏆 BEST TIME</h3>
+            <div class="highscores">
+                <span id="chaos-record">Best: 0:00</span>
+            </div>
+        </div>
+        <div class="menu-section">
+            <label><input type="checkbox" id="chaos-shield-toggle"> Start with Shield (5 coins)</label>
+        </div>
+        <button class="menu-btn red" onclick="startChaosMode()">START CHAOS MODE</button>
+    </div>
+
+    <!-- SHOP TAB -->
+    <div id="tab-shop" class="tab-content">
+        <div class="menu-section">
+            <h3>👕 NEXTBOT SKINS</h3>
+            <div class="shop-grid" id="skin-shop"></div>
+        </div>
+    </div>
+
+    <!-- UPGRADES TAB -->
+    <div id="tab-upgrades" class="tab-content">
+        <div class="menu-section">
+            <h3>❄️ ICE UPGRADES</h3>
+            <div id="ice-upgrades"></div>
+        </div>
+        <div class="menu-section">
+            <h3>⚡ SPEED UPGRADES</h3>
+            <div id="speed-upgrades"></div>
+        </div>
+        <div class="menu-section">
+            <h3>🛡️ SHIELD UPGRADES</h3>
+            <div id="shield-upgrades"></div>
+        </div>
+        <div class="menu-section">
+            <h3>🏃 STAMINA CAPACITY</h3>
+            <div id="stamina-cap-upgrades"></div>
+        </div>
+        <div class="menu-section">
+            <h3>🔋 STAMINA REGEN</h3>
+            <div id="stamina-regen-upgrades"></div>
+        </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div id="tab-settings" class="tab-content">
+        <div class="menu-section">
+            <h3>⚙️ GENERAL</h3>
+            <div class="settings-row desktop-controls">
+                <label>Sprint Key:</label>
+                <select id="sprint-key-select" onchange="updateSprintKey()">
+                    <option value="ShiftLeft">Left Shift</option>
+                    <option value="ShiftRight">Right Shift</option>
+                    <option value="ControlLeft">Left Ctrl</option>
+                    <option value="KeyC">C</option>
+                </select>
+            </div>
+            <div class="settings-row">
+                <label>Music Volume:</label>
+                <input type="range" id="music-volume" min="0" max="100" value="100" oninput="updateMusicVolume()">
+                <span class="sensitivity-value" id="music-vol-display">100</span>
+            </div>
+            <div class="settings-row">
+                <label>Minimap:</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="minimap-toggle" checked onchange="updateMinimapToggle()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>Fullscreen:</label>
+                <button class="menu-btn small" id="fullscreen-btn" onclick="toggleFullscreen()">Enter Fullscreen</button>
+            </div>
+        </div>
+
+        <div class="menu-section">
+            <h3>🎯 SENSITIVITY</h3>
+            <div class="settings-subsection">
+                <h4>Input Mode</h4>
+                <div class="settings-row">
+                    <label>Mode:</label>
+                    <div class="input-mode-toggle">
+                        <button class="input-mode-btn" id="mode-desktop" onclick="setInputMode('desktop')">🖥️ Desktop</button>
+                        <button class="input-mode-btn" id="mode-mobile" onclick="setInputMode('mobile')">📱 Mobile</button>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-subsection">
+                <h4>🖥️ Desktop</h4>
+                <div class="settings-row">
+                    <label>Look Speed:</label>
+                    <input type="range" id="desktop-sensitivity" min="1" max="20" value="5" oninput="updateDesktopSensitivity()">
+                    <span class="sensitivity-value" id="desktop-sens-display">5</span>
+                </div>
+            </div>
+            <div class="settings-subsection">
+                <h4>📱 Mobile</h4>
+                <div class="settings-row">
+                    <label>Look Speed:</label>
+                    <input type="range" id="mobile-sensitivity" min="1" max="20" value="8" oninput="updateMobileSensitivity()">
+                    <span class="sensitivity-value" id="mobile-sens-display">8</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="menu-section">
+            <h3>🎯 CROSSHAIR</h3>
+            <div class="settings-subsection">
+                <h4>Shape</h4>
+                <div class="shape-options" id="crosshair-shapes"></div>
+            </div>
+            <div class="settings-subsection">
+                <h4>Color</h4>
+                <div class="color-options" id="crosshair-colors"></div>
+            </div>
+            <div class="settings-subsection">
+                <h4>Size &amp; Style</h4>
+                <div class="settings-row">
+                    <label>Size:</label>
+                    <input type="range" id="ch-size" min="2" max="20" value="6" oninput="updateCrosshairSettings()">
+                    <span class="sensitivity-value" id="ch-size-d">6</span>
+                </div>
+                <div class="settings-row">
+                    <label>Opacity:</label>
+                    <input type="range" id="ch-opacity" min="10" max="100" value="80" oninput="updateCrosshairSettings()">
+                    <span class="sensitivity-value" id="ch-opa-d">80%</span>
+                </div>
+                <div class="settings-row">
+                    <label>Thickness:</label>
+                    <input type="range" id="ch-thick" min="1" max="6" value="2" oninput="updateCrosshairSettings()">
+                    <span class="sensitivity-value" id="ch-thk-d">2</span>
+                </div>
+            </div>
+            <div class="settings-subsection">
+                <h4>Preview</h4>
+                <div class="crosshair-preview" id="ch-preview"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== GAME UI ==================== -->
+<div id="ui">
+    <div id="crosshair"></div>
+    <div id="stamina-container">
+        <div id="stamina-bar"></div>
+    </div>
+    <div id="powerups-display">
+        <div class="powerup-slot" id="slot-ice"><span style="color:#666;">❄️</span></div>
+        <div class="powerup-slot" id="slot-speed"><span style="color:#666;">⚡</span></div>
+        <div class="powerup-slot" id="slot-shield"><span style="color:#666;">🛡️</span></div>
+    </div>
+    <div id="warning">⚠️ HE'S CLOSE ⚠️</div>
+    <div id="shield-indicator">🛡️ SHIELD ACTIVE</div>
+    <div id="timer">0:00</div>
+    <div id="hud-coins">💰 0</div>
+    <div id="minimap"><canvas id="minimap-canvas"></canvas></div>
+    <div id="minimap-floor">Map: Backrooms</div>
+    <div id="pickup-msg"></div>
+    <div id="escape-hud">
+        <div id="escape-round">Round: 1</div>
+        <div id="escape-door-indicator">🚪 FIND AN EXIT!</div>
+    </div>
+    <div id="endless-hud">
+        <div id="endless-door-indicator">🚪 Explore to find doors...</div>
+        <div id="endless-score">Doors: 0</div>
+    </div>
+    <div id="chaos-hud">
+        <div id="chaos-timer-display">🔥 CHAOS 🔥</div>
+        <div id="chaos-chasers">3 Nextbots hunting you!</div>
+    </div>
+</div>
+
+<!-- ==================== MOBILE CONTROLS ==================== -->
+<div id="mobile-controls">
+    <div class="mobile-joystick" id="joystick-move">
+        <div class="joystick-knob" id="joystick-knob"></div>
+    </div>
+    <div class="mobile-btn" id="btn-jump">🦘</div>
+    <div class="mobile-btn" id="btn-sprint">⚡</div>
+</div>
+<div class="mobile-btn" id="btn-pause">⏸️</div>
+
+<!-- ==================== OVERLAYS ==================== -->
+<div class="vignette"></div>
+<div id="fear-overlay"></div>
+<div id="freeze-overlay"></div>
+
+<!-- ==================== PAUSE SCREEN ==================== -->
+<div id="pause-screen">
+    <h1>⏸️ PAUSED</h1>
+    <div class="menu-section">
+        <h3>Quick Settings</h3>
+        <div class="settings-row">
+            <label>Volume:</label>
+            <input type="range" id="pause-volume" min="0" max="100" value="100" oninput="updateMusicVolume()">
+        </div>
+        <div class="settings-row">
+            <label>Sensitivity:</label>
+            <input type="range" id="pause-sensitivity" min="1" max="20" value="5" oninput="updatePauseSensitivity()">
+            <span class="sensitivity-value" id="pause-sens-d">5</span>
+        </div>
+    </div>
+    <button class="menu-btn" onclick="resumeGame()">RESUME</button>
+    <button class="menu-btn secondary" onclick="quitGame()">QUIT</button>
+</div>
+
+<!-- ==================== DEATH SCREEN ==================== -->
+<div id="death-screen">
+    <h1>YOU DIED</h1>
+    <p id="death-msg">Caught...</p>
+    <p id="survival-time">Survived: 0:00</p>
+    <p class="coins-earned" id="coins-earned">+0 coins</p>
+    <button class="menu-btn" onclick="restartGame()">TRY AGAIN</button>
+    <button class="menu-btn secondary" onclick="returnToMenu()">MAIN MENU</button>
+</div>
+
+<!-- Hidden video for SCP skin -->
+<video id="scp-video" loop muted playsinline style="display:none;"></video>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/mode-normal.js"></script>
+<script src="js/mode-escape.js"></script>
+<script src="js/mode-endless.js"></script>
+<script src="js/mode-chaos.js"></script>
+<script src="js/core.js"></script>
+</body>
+</html>
