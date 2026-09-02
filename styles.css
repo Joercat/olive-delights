@@ -10,6 +10,14 @@ body {
     color: #fff;
     touch-action: none;
 }
+/* Explicit stacking for the Three.js WebGL canvas */
+body > canvas {
+    display: block;
+    position: fixed;
+    top: 0; left: 0;
+    z-index: 1;
+    touch-action: none;
+}
 .menu-overlay {
     position: fixed;
     top: 0; left: 0;
@@ -36,8 +44,55 @@ body {
 #start-screen h2 {
     color: #ccc;
     font-size: clamp(12px, 2.5vw, 20px);
-    margin-bottom: 12px;
+    margin-bottom: 6px;
 }
+#game-version-badge {
+    display: inline-block;
+    background: rgba(255, 140, 0, 0.15);
+    border: 1px solid rgba(255, 140, 0, 0.55);
+    color: #ffd27a;
+    font-size: clamp(10px, 2vw, 13px);
+    padding: 3px 10px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+}
+.changelog-section {
+    width: 95%;
+    max-width: 560px;
+    text-align: left;
+}
+.changelog-section details {
+    width: 100%;
+}
+.changelog-section summary {
+    cursor: pointer;
+    color: #ffd700;
+    font-size: clamp(12px, 2.5vw, 16px);
+    padding: 4px 0;
+    text-align: center;
+}
+.changelog-section #changelog-version {
+    color: #8fd3ff;
+    margin-left: 6px;
+}
+.changelog-section #changelog-body {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.15);
+}
+.changelog-section ul {
+    list-style: none;
+    padding: 0;
+}
+.changelog-section li {
+    color: #d9dce3;
+    font-size: clamp(10px, 2vw, 12px);
+    line-height: 1.45;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.changelog-section li:last-child { border-bottom: none; }
 .menu-section {
     background: rgba(0, 0, 0, 0.5);
     padding: 10px 12px;
@@ -76,6 +131,13 @@ body {
 .menu-btn.small { padding: 6px 12px; font-size: clamp(11px, 2.3vw, 14px); }
 .menu-btn.purple { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
 .menu-btn.red { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+.menu-btn.dark { background: linear-gradient(135deg, #111, #333); color: #fbbf24; border-color: #fbbf24; }
+button.capturing {
+    background: linear-gradient(135deg, #1e3a8a, #1e40af) !important;
+    color: #fff !important;
+    border-color: #60a5fa !important;
+    animation: pulse 0.5s infinite alternate;
+}
 .coins-display { color: #ffd700; font-size: clamp(14px, 3vw, 18px); margin: 6px 0; }
 .highscores { color: #4ade80; font-size: clamp(12px, 2.5vw, 14px); }
 .highscores span { display: block; margin: 2px 0; }
@@ -225,11 +287,16 @@ body {
 }
 #stamina-bar.infinite { background: linear-gradient(90deg, #fbbf24, #f59e0b); animation: pulse 0.3s infinite alternate; }
 #stamina-bar.boosted { background: linear-gradient(90deg, #f472b6, #ec4899); }
+#stamina-bar.exhausted {
+    background: linear-gradient(90deg, #ef4444, #b91c1c);
+    animation: staminaBlink 0.5s infinite alternate;
+}
+@keyframes staminaBlink { from { opacity: 0.3; } to { opacity: 1; } }
 @keyframes pulse { from { opacity: 0.7; } to { opacity: 1; } }
 #hud-coins { position: absolute; top: 15px; left: 100px; color: #ffd700; font-size: clamp(13px, 2.8vw, 18px); }
 #timer { position: absolute; top: 15px; left: 15px; color: #fff; font-size: clamp(14px, 3vw, 20px); }
 #warning {
-    position: absolute; top: 80px; left: 50%;
+    position: absolute; top: 150px; left: 50%;
     transform: translateX(-50%);
     color: #ff4444;
     font-size: clamp(14px, 3.5vw, 24px);
@@ -326,6 +393,50 @@ body {
     background: rgba(100, 200, 255, 0.2);
     opacity: 0; z-index: 48;
 }
+#darkness-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 46;
+    background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%), transparent 7%, rgba(0,0,0,0.78) 62%, rgba(0,0,0,0.95) 86%, rgba(0,0,0,1) 100%);
+    opacity: 0; transition: opacity 0.07s;
+}
+#darkness-overlay.flashlight-on {
+    /* The bright cone is the clear ring in the middle; it gets wider (more
+       transparent) toward the center and the far edges fall off into dark. */
+    background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%),
+        transparent 0%, transparent 28%, rgba(0,0,0,0.20) 50%,
+        rgba(0,0,0,0.52) 70%, rgba(0,0,0,0.80) 88%, rgba(0,0,0,0.90) 100%);
+}
+#darkness-overlay.flashlight-off {
+    /* Flashlight off/broken: a faint pool around the player so nearby walls are
+       always visible, then it darkens out but still lets a screen-wide glow
+       through so the room never becomes unreadable. */
+    background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%),
+        transparent 0%, transparent 10%, rgba(0,0,0,0.22) 24%,
+        rgba(0,0,0,0.54) 48%, rgba(0,0,0,0.78) 75%, rgba(0,0,0,0.86) 100%);
+}
+#flashlight-vision {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 47;
+    mix-blend-mode: screen;
+    opacity: 0; transition: opacity 0.07s;
+    background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%),
+        rgba(255,241,205,0.16) 0%, rgba(255,241,205,0.10) 30%,
+        rgba(255,241,205,0.03) 55%, rgba(0,0,0,0) 72%);
+}
+#flashlight-vision.flashlight-on {
+    background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%),
+        rgba(255,242,208,0.38) 0%, rgba(255,242,208,0.22) 28%,
+        rgba(255,242,208,0.08) 52%, rgba(0,0,0,0) 72%);
+}
+#flashlight-vision.flashlight-off {
+    /* Faint dim glow that reaches every corner of the screen, with the brightest
+       core around the crosshair. The bright core is about 60% the size of the
+       flashlight-on beam circle. */
+    background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%),
+        rgba(194,212,235,0.38) 0%, rgba(194,212,235,0.22) 19%,
+        rgba(194,212,235,0.11) 42%, rgba(194,212,235,0.06) 66%,
+        rgba(194,212,235,0.04) 86%, rgba(194,212,235,0.034) 100%);
+}
 #death-screen {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(80, 0, 0, 0.95);
@@ -344,9 +455,38 @@ body {
     z-index: 250; padding: 20px; overflow-y: auto;
 }
 #pause-screen h1 { color: #fff; font-size: clamp(28px, 7vw, 48px); margin-bottom: 10px; }
+#darkescape-hud {
+    position: absolute; top: 62px; left: 50%; transform: translateX(-50%);
+    text-align: center; display: none; max-width: calc(100vw - 210px);
+}
+#darkescape-mode { color: #4ade80; font-size: clamp(16px, 3.5vw, 24px); font-weight: bold; text-shadow: 0 0 10px #000; }
+#darkescape-heading { display: none; }
+#darkescape-keys { color: #ffe14d; font-size: clamp(12px, 2.6vw, 18px); margin-top: 3px; text-shadow: 0 0 10px #000; }
+#darkescape-battery-wrap { margin-top: 3px; }
+#darkescape-battery { color: #55aaff; font-size: clamp(11px, 2.3vw, 15px); text-shadow: 0 0 10px #000; }
+#darkescape-door-indicator {
+    color: #c084fc; font-size: clamp(12px, 2.6vw, 17px); margin-top: 4px;
+    text-shadow: 0 0 12px #8b5cf6; animation: doorPulse 1s infinite alternate;
+}
+#darkescape-door-indicator.nearby { color: #ffff00; text-shadow: 0 0 20px #ffff00; }
+#darkescape-controls {
+    position: fixed; bottom: 152px; left: 50%; transform: translateX(-50%);
+    color: #b8b8c8; font-size: clamp(10px, 2.2vw, 13px); white-space: nowrap;
+    text-shadow: 0 0 8px #000; opacity: 0.85;
+}
+body.is-mobile #darkescape-controls { bottom: 156px; font-size: clamp(9px, 2vw, 12px); }
+#win-screen {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 60, 0, 0.95);
+    display: none; justify-content: center; align-items: center; flex-direction: column;
+    z-index: 210; padding: 20px;
+}
+#win-screen h1 { color: #ffd700; font-size: clamp(36px, 9vw, 72px); text-shadow: 0 0 30px #ff8c00; margin-bottom: 10px; }
+#win-screen p { color: #d8ffd8; font-size: clamp(14px, 3.5vw, 20px); margin-bottom: 6px; }
+#win-screen .coins-earned { color: #ffd700; font-size: clamp(16px, 4vw, 24px); margin: 10px 0; }
 #mobile-controls {
     position: fixed; bottom: 0; left: 0; width: 100%; height: 140px;
-    z-index: 150; pointer-events: none; display: none;
+    z-index: 150; pointer-events: auto; display: none;
 }
 .mobile-joystick {
     position: absolute; bottom: 20px; left: 20px;
@@ -383,6 +523,8 @@ body {
 #btn-jump { bottom: 65px; right: 18px; }
 #btn-sprint { bottom: 8px; right: 75px; background: rgba(255, 200, 0, 0.2); border-color: rgba(255, 200, 0, 0.4); }
 #btn-sprint.active { background: rgba(255, 200, 0, 0.5); }
+#btn-flashlight { bottom: 8px; right: 18px; background: rgba(120, 200, 255, 0.2); border-color: rgba(120, 200, 255, 0.5); }
+#btn-flashlight.active { background: rgba(120, 200, 255, 0.55); }
 #btn-pause { top: 15px; right: 15px; width: 42px; height: 42px; font-size: 18px; position: fixed; z-index: 160; }
 
 body.is-mobile #mobile-controls { display: block; }

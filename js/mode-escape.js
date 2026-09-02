@@ -14,10 +14,11 @@ function startEscapeMode() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
+    resetSprintState();
 
     document.getElementById('hud-coins').textContent = '💰 0';
-    currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
-    GRID_SIZE = baseGridSize * 2;
+    currentMap = resolveSelectedMap();
+    GRID_SIZE = getMapSize();
 
     document.getElementById('minimap').style.display = 'none';
     document.getElementById('minimap-floor').style.display = 'none';
@@ -28,7 +29,7 @@ function startEscapeMode() {
     document.getElementById('escape-door-indicator').textContent = '🚪 FIND AN EXIT!';
     document.getElementById('escape-door-indicator').classList.remove('nearby');
 
-    while (scene.children.length > 0) scene.remove(scene.children[0]);
+    clearScene();
     generateMaze();
     buildWorld();
     createKanye();
@@ -45,6 +46,7 @@ function createEscapeDoors() {
     escapeDoors = [];
 
     var pGrid = worldToGrid(player.x, player.z);
+    var pSnap = findNearestPathWalkableGrid(pGrid.x, pGrid.z, 3);
     var candidates = [];
 
     for (var x = 2; x < GRID_SIZE - 2; x++) {
@@ -59,12 +61,24 @@ function createEscapeDoors() {
                 for (var ai = 0; ai < adjacentDirs.length; ai++) {
                     var adj = adjacentDirs[ai];
                     if (adj.wx >= 0 && adj.wx < GRID_SIZE && adj.wz >= 0 && adj.wz < GRID_SIZE &&
-                        maze[adj.wx] && maze[adj.wx][adj.wz] === 0) {
+                        isPathWalkableGrid(adj.wx, adj.wz)) {
+
+                        // Require an accessible approach from at least two sides so the
+                        // door is never placed against an only-tangent wall corner.
+                        var openSides = 0;
+                        var approach = [
+                            { dx: -1, dz: 0 }, { dx: 1, dz: 0 },
+                            { dx: 0, dz: -1 }, { dx: 0, dz: 1 }
+                        ];
+                        for (var ap = 0; ap < approach.length; ap++) {
+                            if (isPathWalkableGrid(adj.wx + approach[ap].dx, adj.wz + approach[ap].dz)) openSides++;
+                        }
+                        if (openSides < 2) continue;
 
                         var doorPos = gridToWorld(x, z);
                         if (Math.hypot(doorPos.x - player.x, doorPos.z - player.z) < 25) continue;
 
-                        var path = findPath(pGrid.x, pGrid.z, adj.wx, adj.wz, 5000);
+                        var path = findPath(pSnap.x, pSnap.z, adj.wx, adj.wz, 9000);
                         if (path.length > 0) {
                             candidates.push({ x: x, z: z, adjX: adj.wx, adjZ: adj.wz, dir: adj.dir, pathLen: path.length });
                         }
@@ -103,9 +117,13 @@ function createEscapeDoors() {
     var doorsToCreate = [door1, door2];
     for (var di2 = 0; di2 < doorsToCreate.length; di2++) {
         var dd = doorsToCreate[di2];
-        var doorWorldPos = gridToWorld(dd.x, dd.z);
+        var wallWorldPos = gridToWorld(dd.x, dd.z);
         var adjWorldPos = gridToWorld(dd.adjX, dd.adjZ);
-        var mesh = createDoorMesh(doorWorldPos.x, doorWorldPos.z, dd.dir, 0x44ff44);
+        // Place the door mesh at the face midpoint between the wall cell and its open neighbour
+        // so it sits flush with the wall surface rather than floating in the centre of the cell.
+        var faceX = (wallWorldPos.x + adjWorldPos.x) / 2;
+        var faceZ = (wallWorldPos.z + adjWorldPos.z) / 2;
+        var mesh = createDoorMesh(faceX, faceZ, dd.dir, 0x44ff44, true);
         scene.add(mesh);
         escapeDoors.push({ mesh: mesh, x: adjWorldPos.x, z: adjWorldPos.z, gridX: dd.x, gridZ: dd.z });
     }
@@ -150,8 +168,11 @@ function winEscapeRound() {
 
     document.getElementById('escape-round').textContent = 'Round: ' + escapeRound;
 
-    while (scene.children.length > 0) scene.remove(scene.children[0]);
-    currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+    // Reset so the audio/video for the new round starts from the beginning.
+    initAudio();
+    clearScene();
+    currentMap = resolveSelectedMap();
+    GRID_SIZE = getMapSize();
     generateMaze();
     buildWorld();
     createKanye();

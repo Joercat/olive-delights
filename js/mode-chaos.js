@@ -36,10 +36,11 @@ function startChaosMode() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
+    resetSprintState();
 
     document.getElementById('hud-coins').textContent = '💰 0';
-    currentMap = ['backrooms', 'warehouse', 'hospital'][Math.floor(Math.random() * 3)];
-    GRID_SIZE = baseGridSize;
+    currentMap = resolveSelectedMap();
+    GRID_SIZE = getMapSize();
 
     document.getElementById('minimap').style.display = 'none';
     document.getElementById('minimap-floor').style.display = 'none';
@@ -47,7 +48,7 @@ function startChaosMode() {
     document.getElementById('endless-hud').style.display = 'none';
     document.getElementById('chaos-hud').style.display = 'block';
 
-    while (scene.children.length > 0) scene.remove(scene.children[0]);
+    clearScene();
     generateMaze();
     buildWorld();
 
@@ -127,6 +128,7 @@ function startChaosMode() {
 
 function updateChaosNextbots(dt) {
     var closestDist = Infinity;
+    var anyLineOfSight = false;
 
     for (var i = 0; i < chaosNextbots.length; i++) {
         var nb = chaosNextbots[i];
@@ -134,6 +136,7 @@ function updateChaosNextbots(dt) {
         if (distToPlayer === undefined) continue;
 
         if (distToPlayer < closestDist) closestDist = distToPlayer;
+        if (hasClearLineOfSight(nb.x, nb.z, player.x, player.z)) anyLineOfSight = true;
 
         if (distToPlayer < 1.2) {
             if (handleNextbotCatch(nb)) { killPlayer(); return; }
@@ -146,11 +149,5 @@ function updateChaosNextbots(dt) {
 
     var fear = document.getElementById('fear-overlay');
     var warn = document.getElementById('warning');
-    if (closestDist < 20) {
-        fear.style.opacity = (1 - closestDist / 20) * 0.6;
-        warn.style.opacity = closestDist < 10 ? 1 : 0;
-    } else {
-        fear.style.opacity = 0;
-        warn.style.opacity = 0;
-    }
+    updateCloseDanger(fear, warn, closestDist, anyLineOfSight);
 }
