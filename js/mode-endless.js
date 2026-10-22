@@ -5,6 +5,8 @@
 function startEndlessMode() {
     document.getElementById('start-screen').classList.add('hidden');
     gameStarted = true;
+    isDead = false;
+    isPaused = false;
     isEndlessMode = true;
     isEscapeMode = false;
     isChaosMode = false;
@@ -13,6 +15,8 @@ function startEndlessMode() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
+    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
+    resetSprintState();
     endlessDoorsFound = 0;
 
     document.getElementById('hud-coins').textContent = '💰 0';
@@ -23,20 +27,26 @@ function startEndlessMode() {
     document.getElementById('endless-hud').style.display = 'block';
     document.getElementById('endless-score').textContent = 'Doors: 0';
     document.getElementById('endless-door-indicator').textContent = '🚪 Explore to find doors...';
+    updateTestBadgeUI();
 
-    while (scene.children.length > 0) scene.remove(scene.children[0]);
+    clearScene();
     endlessChunks.clear();
     endlessChunkMeshes.clear();
     endlessLRU.length = 0;
     endlessDoorsList = [];
     endlessDecorations = [];
 
-    currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+    if (forceMapNextRun) {
+        currentMap = forceMapNextRun;
+        forceMapNextRun = null;
+    } else {
+        currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+    }
 
     var mats = getMapMats();
     scene.background = new THREE.Color(mats.fogColor);
     scene.fog = new THREE.Fog(mats.fogColor, 2, 35);
-    scene.add(new THREE.AmbientLight(0xfff5e0, 0.9));
+    ensureAmbientLight();
 
     player.x = 2 * CELL;
     player.z = 2 * CELL;
@@ -50,7 +60,7 @@ function startEndlessMode() {
     var shieldEl = document.getElementById('endless-shield-toggle');
     if (shieldEl && shieldEl.checked && saveData.coins >= 5) {
         saveData.coins -= 5;
-        player.shieldHits = saveData.upgrades.shield >= 3 ? 2 : 1;
+        player.shieldHits = getBaseShieldHits(false);
         document.getElementById('shield-indicator').style.opacity = '1';
         document.getElementById('slot-shield').classList.add('active');
         saveSaveData();
@@ -90,6 +100,8 @@ function spawnKanyeEndless() {
     if (spawn) { kanye.x = spawn.wx; kanye.z = spawn.wz; }
     else { kanye.x = player.x + 30; kanye.z = player.z + 30; }
 
+    kanye.baseY = 0;
+    kanye.y = 1.25;
     kanye.vx = 0;
     kanye.vz = 0;
     kanye.pathTimer = 0;
@@ -103,6 +115,31 @@ function getChunkSeed(cx, cz) {
     h = (h ^ (h >> 13)) * 1274126177;
     h = h ^ (h >> 16);
     return Math.abs(h) % 2147483646 + 1;
+}
+
+// Verifies that an open cell inside a generated chunk is connected to the chunk's main walkable area.
+function chunkCellReachable(data, fromX, fromZ, toX, toZ) {
+    if (!data.maze[fromX] || data.maze[fromX][fromZ] !== 0) return false;
+    if (!data.maze[toX] || data.maze[toX][toZ] !== 0) return false;
+    var visited = {};
+    var q = [{ x: fromX, z: fromZ }];
+    visited[fromX + ',' + fromZ] = true;
+    var dirs = [{ dx: -1, dz: 0 }, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
+    while (q.length > 0) {
+        var cur = q.shift();
+        if (cur.x === toX && cur.z === toZ) return true;
+        for (var i = 0; i < dirs.length; i++) {
+            var nx = cur.x + dirs[i].dx;
+            var nz = cur.z + dirs[i].dz;
+            var nk = nx + ',' + nz;
+            if (nx < 0 || nx >= CHUNK_SIZE || nz < 0 || nz >= CHUNK_SIZE) continue;
+            if (visited[nk]) continue;
+            if (!data.maze[nx] || data.maze[nx][nz] !== 0) continue;
+            visited[nk] = true;
+            q.push({ x: nx, z: nz });
+        }
+    }
+    return false;
 }
 
 function generateEndlessChunk(cx, cz) {
@@ -163,6 +200,16 @@ function generateEndlessChunk(cx, cz) {
     data.hasDoor = false;
     data.doorInfo = null;
     if (sr() < 0.05) {
+        var centerX = Math.floor(CHUNK_SIZE / 2);
+        var centerZ = Math.floor(CHUNK_SIZE / 2);
+        var anchor = null;
+        var anchorDist = Infinity;
+        for (var aw = 0; aw < data.walkable.length; aw++) {
+            var cw = data.walkable[aw];
+            var cd = Math.hypot(cw.x - centerX, cw.z - centerZ);
+            if (cd < anchorDist) { anchorDist = cd; anchor = cw; }
+        }
+
         var wallCandidates = [];
         for (var xi = 2; xi < CHUNK_SIZE - 2; xi++) {
             for (var zi = 2; zi < CHUNK_SIZE - 2; zi++) {
@@ -172,6 +219,15 @@ function generateEndlessChunk(cx, cz) {
                         var adjDir = adjDirs[adi];
                         var ax = xi + adjDir.dx, az = zi + adjDir.dz;
                         if (ax >= 0 && ax < CHUNK_SIZE && az >= 0 && az < CHUNK_SIZE && data.maze[ax][az] === 0) {
+                            if (anchor && !chunkCellReachable(data, anchor.x, anchor.z, ax, az)) break;
+                            var openCount2 = 0;
+                            var apDirs = [{ dx: -1, dz: 0 }, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
+                            for (var ad2 = 0; ad2 < apDirs.length; ad2++) {
+                                var opx = ax + apDirs[ad2].dx;
+                                var opz = az + apDirs[ad2].dz;
+                                if (opx >= 0 && opx < CHUNK_SIZE && opz >= 0 && opz < CHUNK_SIZE && data.maze[opx][opz] === 0) openCount2++;
+                            }
+                            if (openCount2 < 2) break;
                             wallCandidates.push({ wx: xi, wz: zi, ax: ax, az: az, dir: adjDir });
                             break;
                         }
@@ -209,33 +265,50 @@ function buildEndlessChunkMeshes(cx, cz) {
     var mats = getMapMats();
     var meshes = [];
 
+    var wallCount = 0;
+    var wallXZ = [];
     for (var x = 0; x < CHUNK_SIZE; x++) {
         for (var z = 0; z < CHUNK_SIZE; z++) {
             if (chunk.maze[x][z] === 1) {
-                var wp = endlessLocalToWorld(x, z, cx, cz);
-                var wall = new THREE.Mesh(new THREE.BoxGeometry(CELL, WALL_H, CELL), mats.wallMat);
-                wall.position.set(wp.x, WALL_H / 2, wp.z);
-                scene.add(wall);
-                meshes.push(wall);
+                wallXZ.push({ x: x, z: z });
+                wallCount++;
             }
         }
+    }
+
+    if (wallCount > 0) {
+        var wallInst = new THREE.InstancedMesh(getSharedBox(), mats.wallMat, wallCount);
+        wallInst.instanceMatrix.setUsage(THREE.StaticDrawUsage || 0);
+        var dummy = new THREE.Object3D();
+        for (var wi = 0; wi < wallCount; wi++) {
+            var cell = wallXZ[wi];
+            var wp = endlessLocalToWorld(cell.x, cell.z, cx, cz);
+            dummy.position.set(wp.x, WALL_H / 2, wp.z);
+            dummy.rotation.set(0, 0, 0);
+            dummy.updateMatrix();
+            wallInst.setMatrixAt(wi, dummy.matrix);
+        }
+        wallInst.instanceMatrix.needsUpdate = true;
+        scene.add(wallInst);
+        meshes.push(wallInst);
     }
 
     var offsetX = (cx * CHUNK_SIZE + CHUNK_SIZE / 2) * CELL;
     var offsetZ = (cz * CHUNK_SIZE + CHUNK_SIZE / 2) * CELL;
 
-    var floorGeo = new THREE.PlaneGeometry(CHUNK_SIZE * CELL, CHUNK_SIZE * CELL);
-    var floor = new THREE.Mesh(floorGeo, mats.floorMat);
+    var floor = new THREE.Mesh(getFloorGeo(CHUNK_SIZE * CELL), mats.floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(offsetX, 0.01, offsetZ);
     scene.add(floor);
     meshes.push(floor);
 
-    var ceiling = new THREE.Mesh(floorGeo.clone(), mats.ceilMat);
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.set(offsetX, WALL_H, offsetZ);
-    scene.add(ceiling);
-    meshes.push(ceiling);
+    if (!mats.outdoor && mats.ceilMat) {
+        var ceiling = new THREE.Mesh(getFloorGeo(CHUNK_SIZE * CELL), mats.ceilMat);
+        ceiling.rotation.x = Math.PI / 2;
+        ceiling.position.set(offsetX, WALL_H, offsetZ);
+        scene.add(ceiling);
+        meshes.push(ceiling);
+    }
 
     if (chunk.hasDoor && chunk.doorInfo) {
         var di = chunk.doorInfo;
@@ -257,10 +330,29 @@ function buildEndlessChunkMeshes(cx, cz) {
     endlessChunkMeshes.set(key, meshes);
 }
 
+function disposeMeshOnly(obj) {
+    if (!obj) return;
+    if (obj.isGroup) {
+        obj.traverse(function (child) {
+            disposeMeshOnly(child);
+        });
+        return;
+    }
+    if (obj.geometry && !(obj.geometry.userData && obj.geometry.userData.shared)) obj.geometry.dispose();
+    var mats = obj.material ? (Array.isArray(obj.material) ? obj.material : [obj.material]) : [];
+    for (var i = 0; i < mats.length; i++) {
+        var m = mats[i];
+        if (m && !(m.userData && m.userData.shared)) m.dispose();
+    }
+}
+
 function unloadChunkMeshes(key) {
     var meshes = endlessChunkMeshes.get(key);
     if (!meshes) return;
-    for (var i = 0; i < meshes.length; i++) scene.remove(meshes[i]);
+    for (var i = 0; i < meshes.length; i++) {
+        scene.remove(meshes[i]);
+        disposeMeshOnly(meshes[i]);
+    }
     endlessChunkMeshes.delete(key);
     endlessDoorsList = endlessDoorsList.filter(function (d) { return d.chunkKey !== key; });
 }
@@ -311,7 +403,7 @@ function checkEndlessDoors() {
             sessionCoins += 3;
             document.getElementById('hud-coins').textContent = '💰 ' + sessionCoins;
 
-            if (endlessDoorsFound > (saveData.endlessRecord || 0)) {
+            if (!sessionUsedTestMode && endlessDoorsFound > (saveData.endlessRecord || 0)) {
                 saveData.endlessRecord = endlessDoorsFound;
                 saveSaveData();
             }
