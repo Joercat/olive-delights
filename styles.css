@@ -376,6 +376,76 @@ button.capturing {
     padding: 2px;
     border-radius: 4px;
 }
+#minimap-floor.standalone {
+    top: 15px;
+    width: auto;
+    min-width: 120px;
+    padding: 4px 8px;
+}
+#test-mode-badge {
+    position: absolute;
+    top: 44px;
+    left: 15px;
+    background: rgba(16, 185, 129, 0.22);
+    border: 1px solid rgba(52, 211, 153, 0.7);
+    color: #6ee7b7;
+    font-size: clamp(10px, 2vw, 12px);
+    padding: 3px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.5px;
+    display: none;
+    text-shadow: 0 0 6px #000;
+}
+#secret-test-modal {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(8, 10, 20, 0.92);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 400;
+    padding: 16px;
+    overflow-y: auto;
+}
+#secret-test-modal.open {
+    display: flex;
+}
+.secret-modal-card {
+    background: linear-gradient(145deg, #161b2e, #0d111d);
+    border: 2px solid #4ade80;
+    box-shadow: 0 0 32px rgba(74, 222, 128, 0.25);
+    border-radius: 10px;
+    padding: 16px;
+    width: 440px;
+    max-width: 95%;
+    text-align: center;
+}
+.secret-modal-card h2 {
+    color: #4ade80;
+    font-size: clamp(16px, 3.6vw, 24px);
+    margin-bottom: 4px;
+    text-shadow: 0 0 14px rgba(74, 222, 128, 0.45);
+}
+.secret-modal-sub {
+    color: #9ca3af;
+    font-size: 11px;
+    margin-bottom: 10px;
+}
+.secret-btn-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 6px;
+}
+.menu-btn.green {
+    background: linear-gradient(135deg, #10b981, #047857);
+}
+.menu-btn.teal {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+}
 .vignette {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     pointer-events: none; z-index: 45;

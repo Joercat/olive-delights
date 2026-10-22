@@ -1,5 +1,8 @@
 # Olive Delights — Changelog
 
+## v2.7.3
+Added optional Backrooms 2nd floor (Level 1: Habitable Zone) connected by staircases, authentic real Level 0 & Level 1 textures, local repo bundling for all external assets, and a secret peaceful testing menu (`olive`).
+
 ## v2.7.2
 Added Creepy Ye skin, fixed powerups clustering on the left wall (Fisher-Yates shuffle), corrected flashlight life upgrade to increase total battery capacity instead of slowing drain, updated battery pickup URL, and added an asset-load failure banner on the start screen.
 

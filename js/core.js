@@ -2,8 +2,8 @@
 // ==========================================
 // VERSION
 // ==========================================
-var GAME_VERSION = '2.7.2';
-var GAME_BUILD_CACHE = 'v27b';
+var GAME_VERSION = '2.7.3';
+var GAME_BUILD_CACHE = 'v27c';
 
 // ==========================================
 // SAVE DATA
@@ -30,6 +30,7 @@ var saveData = {
         fov: 75,
         mapPickerEnabled: false,
         selectedMap: 'auto',
+        backroomsSecondFloor: false,
         crosshair: { shape: 'dot', color: '#ffffff', size: 6, opacity: 80, thickness: 2 }
     }
 };
@@ -53,6 +54,7 @@ function loadSaveData() {
             if (saveData.settings.fov === undefined) saveData.settings.fov = 75;
             if (saveData.settings.mapPickerEnabled === undefined) saveData.settings.mapPickerEnabled = false;
             if (saveData.settings.selectedMap === undefined) saveData.settings.selectedMap = 'auto';
+            if (saveData.settings.backroomsSecondFloor === undefined) saveData.settings.backroomsSecondFloor = false;
             if (saveData.settings.flashlightKey === undefined) saveData.settings.flashlightKey = 'KeyF';
             if (saveData.settings.sprintMode === undefined) saveData.settings.sprintMode = 'hold';
             // Old "Park" saved selection maps to the renamed Forest map.
@@ -82,16 +84,16 @@ function saveSaveData() {
 // SHOP & UPGRADE DEFINITIONS
 // ==========================================
 var SKINS = [
-    { id: 'default', name: 'Classic Kanye', url: 'https://joercat.github.io/kanye.png', cost: 0, type: 'image' },
-    { id: 'kanye2', name: 'Weird Kanye', url: 'https://joercat.github.io/kanye2.png', cost: 50, type: 'image' },
-    { id: 'kanye3', name: 'Anime Kanye', url: 'https://joercat.github.io/kanye3.png', cost: 45, type: 'image' },
-    { id: 'kanye4', name: 'Christmas Kanye', url: 'https://joercat.github.io/kanye4.png', cost: 55, type: 'image' },
-    { id: 'kanye5', name: 'Fih', url: 'https://joercat.github.io/kanye5.png', cost: 50, type: 'image' },
-    { id: 'kanye6', name: 'Obunga', url: 'https://joercat.github.io/knaye6.png', cost: 50, type: 'image' },
+    { id: 'default', name: 'Classic Kanye', url: 'assets/kanye.png', cost: 0, type: 'image' },
+    { id: 'kanye2', name: 'Weird Kanye', url: 'assets/kanye2.png', cost: 50, type: 'image' },
+    { id: 'kanye3', name: 'Anime Kanye', url: 'assets/kanye3.png', cost: 45, type: 'image' },
+    { id: 'kanye4', name: 'Christmas Kanye', url: 'assets/kanye4.png', cost: 55, type: 'image' },
+    { id: 'kanye5', name: 'Fih', url: 'assets/kanye5.png', cost: 50, type: 'image' },
+    { id: 'kanye6', name: 'Obunga', url: 'assets/knaye6.png', cost: 50, type: 'image' },
     { id: 'scp_wish', name: 'SCP Wish I New', url: 'scp.png', cost: 60, type: 'video', videoUrl: 'scp.mp4', desc: 'Terrifying SCP' },
     { id: 'hamood', name: 'Hamood Habibi', url: 'hamood.png', cost: 55, type: 'image_audio', audioUrl: 'hamood.mp3', desc: 'Hamood Habibi!' },
-    { id: 'captain_clark', name: 'Captain Clark', url: 'https://joercat.github.io/noFilter-removebg-preview.png?v=26', cost: 60, type: 'image', desc: "The Ottoman Empire pirate" },
-    { id: 'creepy_ye', name: 'Creepy Ye', url: 'https://joercat.github.io/creepy%20ye.png', cost: 50, type: 'image', desc: 'Something is wrong with him...' }
+    { id: 'captain_clark', name: 'Captain Clark', url: 'assets/captain-clark.png', cost: 60, type: 'image', desc: "The Ottoman Empire pirate" },
+    { id: 'creepy_ye', name: 'Creepy Ye', url: 'assets/creepy-ye.png', cost: 50, type: 'image', desc: 'Something is wrong with him...' }
 ];
 
 // Returns the number of shield hits the player gets from an active shield pickup,
@@ -200,6 +202,25 @@ var mobileSprintActive = false;
 var mobileJumpPressed = false;
 
 var scene, camera, renderer, wallTexture, floorTexture;
+var backroomsCeilTexture, backroomsL1WallTexture, backroomsL1FloorTexture, backroomsL1CeilTexture, crateTexture;
+
+// Multi-floor Backrooms (Level 0: The Lobby -> Level 1: Habitable Zone) + Secret Test Mode state
+var SECOND_FLOOR_Y = 4.0;
+var SECOND_WALL_H = 3.8;
+var SLAB_THICKNESS = 0.5;
+var mazeFloors = [null, null];
+var backroomsStairs = [];
+var stairShaftSet = {};
+var pathBlockedGridFloors = [null, null];
+
+var noBotMode = false;
+var testInfiniteStamina = false;
+var testStartFloor = 0;
+var sessionUsedTestMode = false;
+var forceMapNextRun = null;
+var secretModalOpen = false;
+var secretWasPausedBefore = false;
+var secretKeyBuffer = '';
 
 var skinAudioBuffer = null;
 var skinAudioSource = null;
@@ -224,7 +245,7 @@ var player = {
 };
 
 var kanye = {
-    x: 0, z: 0, y: 1.25,
+    x: 0, z: 0, y: 1.25, baseY: 0,
     vx: 0, vz: 0,
     sprite: null,
     pathTimer: 0,
@@ -313,6 +334,11 @@ function markShared(resource) {
 function getSharedBox() {
     if (!SHARED_GEO.box) SHARED_GEO.box = markShared(new THREE.BoxGeometry(CELL, WALL_H, CELL));
     return SHARED_GEO.box;
+}
+
+function getSharedBoxUpper() {
+    if (!SHARED_GEO.boxUpper) SHARED_GEO.boxUpper = markShared(new THREE.BoxGeometry(CELL, SECOND_WALL_H, CELL));
+    return SHARED_GEO.boxUpper;
 }
 
 function getSharedUnitBox() {
@@ -417,9 +443,248 @@ function getTabAllowedMaps(tabId) {
     return ['backrooms', 'hospital', 'forest'];
 }
 
+function isBackroomsSecondFloorEnabled() {
+    return saveData.settings.backroomsSecondFloor === true;
+}
+
+function hasSecondFloorActive() {
+    return currentMap === 'backrooms' && isBackroomsSecondFloorEnabled() && !isEndlessMode;
+}
+
+function getFloorBaseY(floor) {
+    return floor === 1 ? SECOND_FLOOR_Y : 0;
+}
+
+function getPlayerFloor() {
+    if (!hasSecondFloorActive()) return 0;
+    return (player.y - 1.6) >= SECOND_FLOOR_Y * 0.5 ? 1 : 0;
+}
+
+function getMazeForFloor(floor) {
+    if (floor === 1 && hasSecondFloorActive() && mazeFloors[1]) return mazeFloors[1];
+    return mazeFloors[0] || maze;
+}
+
+function isStairShaftCell(gx, gz) {
+    return !!stairShaftSet[gx + ',' + gz];
+}
+
+function syncSecondFloorCheckboxes() {
+    var enabled = isBackroomsSecondFloorEnabled();
+    var boxes = document.querySelectorAll('.backrooms-2f-checkbox');
+    for (var i = 0; i < boxes.length; i++) {
+        boxes[i].checked = enabled;
+    }
+}
+
+function setBackroomsSecondFloor(val) {
+    saveData.settings.backroomsSecondFloor = !!val;
+    saveSaveData();
+    syncSecondFloorCheckboxes();
+}
+
+function updateTestBadgeUI() {
+    var badge = document.getElementById('test-mode-badge');
+    if (!badge) return;
+    if (gameStarted && (noBotMode || testInfiniteStamina)) {
+        var parts = [];
+        if (noBotMode) parts.push('NO BOT');
+        if (testInfiniteStamina) parts.push('INF STAMINA');
+        badge.textContent = '🧪 TEST MODE · ' + parts.join(' · ');
+        badge.style.display = 'block';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+function syncSecretMenuUI() {
+    var nbEl = document.getElementById('secret-nobot-toggle');
+    if (nbEl) nbEl.checked = !!noBotMode;
+    var stEl = document.getElementById('secret-stamina-toggle');
+    if (stEl) stEl.checked = !!testInfiniteStamina;
+    var flEl = document.getElementById('secret-start-floor');
+    if (flEl) flEl.value = String(testStartFloor || 0);
+    syncSecondFloorCheckboxes();
+    var liveBox = document.getElementById('secret-live-actions');
+    if (liveBox) {
+        liveBox.style.display = (gameStarted && !isDead && hasSecondFloorActive()) ? 'block' : 'none';
+    }
+}
+
+function openSecretTestMenu() {
+    var modal = document.getElementById('secret-test-modal');
+    if (!modal) return;
+    secretModalOpen = true;
+    secretWasPausedBefore = isPaused;
+    if (gameStarted && !isDead && !isPaused) {
+        isPaused = true;
+        lastPauseStart = Date.now();
+        pauseAudio();
+    }
+    if (!isMobile && document.pointerLockElement) {
+        document.exitPointerLock();
+    }
+    syncSecretMenuUI();
+    modal.classList.add('open');
+}
+
+function closeSecretTestMenu() {
+    var modal = document.getElementById('secret-test-modal');
+    if (!modal) return;
+    secretModalOpen = false;
+    modal.classList.remove('open');
+    if (gameStarted && !isDead && !secretWasPausedBefore) {
+        isPaused = false;
+        if (lastPauseStart > 0) {
+            pausedTime += Date.now() - lastPauseStart;
+            lastPauseStart = 0;
+        }
+        if (!isMobile && renderer && renderer.domElement) {
+            renderer.domElement.requestPointerLock();
+        }
+    }
+}
+
+function toggleSecretTestMenu() {
+    if (secretModalOpen) closeSecretTestMenu();
+    else openSecretTestMenu();
+}
+
+function setNoBotMode(val) {
+    noBotMode = !!val;
+    if (noBotMode) sessionUsedTestMode = true;
+    if (gameStarted) {
+        if (noBotMode) {
+            if (kanye && kanye.sprite) kanye.sprite.visible = false;
+            for (var i = 0; i < chaosNextbots.length; i++) {
+                if (chaosNextbots[i].sprite) chaosNextbots[i].sprite.visible = false;
+            }
+            setAudioVolume(0);
+            var fear = document.getElementById('fear-overlay');
+            var warn = document.getElementById('warning');
+            if (fear) fear.style.opacity = '0';
+            if (warn) warn.style.opacity = '0';
+        } else {
+            if (kanye && kanye.sprite) {
+                kanye.sprite.visible = true;
+                kanye.pathTimer = 0;
+            }
+            for (var j = 0; j < chaosNextbots.length; j++) {
+                if (chaosNextbots[j].sprite) {
+                    chaosNextbots[j].sprite.visible = true;
+                    chaosNextbots[j].pathTimer = 0;
+                }
+            }
+        }
+        if (isChaosMode) {
+            var chEl = document.getElementById('chaos-chasers');
+            if (chEl) chEl.textContent = noBotMode ? '🧪 Peaceful Test (No Bots)' : '3 Nextbots hunting you!';
+        }
+    }
+    updateTestBadgeUI();
+    syncSecretMenuUI();
+}
+
+function setTestInfiniteStamina(val) {
+    testInfiniteStamina = !!val;
+    if (testInfiniteStamina) {
+        sessionUsedTestMode = true;
+        stamina = maxStamina;
+        sprintLocked = false;
+        sprintNeedsRelease = false;
+    }
+    updateTestBadgeUI();
+    syncSecretMenuUI();
+}
+
+function setTestStartFloor(val) {
+    testStartFloor = parseInt(val, 10) === 1 ? 1 : 0;
+}
+
+function launchBackroomsTest(mode, startFloor) {
+    setNoBotMode(true);
+    setBackroomsSecondFloor(true);
+    testStartFloor = startFloor === 1 ? 1 : 0;
+    forceMapNextRun = 'backrooms';
+    secretModalOpen = false;
+    secretWasPausedBefore = false;
+    var modal = document.getElementById('secret-test-modal');
+    if (modal) modal.classList.remove('open');
+    document.getElementById('pause-screen').style.display = 'none';
+    document.getElementById('death-screen').style.display = 'none';
+    document.getElementById('win-screen').style.display = 'none';
+    isPaused = false;
+    isDead = false;
+    resetDarkEscapeState();
+
+    if (mode === 'escape') startEscapeMode();
+    else if (mode === 'darkescape') startDarkEscapeMode('easy');
+    else if (mode === 'chaos') startChaosMode();
+    else startGame();
+}
+
+function teleportTestFloor(targetFloor) {
+    if (!gameStarted || !hasSecondFloorActive()) return;
+    sessionUsedTestMode = true;
+    var fl = targetFloor === 1 ? 1 : 0;
+    var best = null;
+    var bestDist = Infinity;
+    for (var i = 0; i < walkableCells.length; i++) {
+        var c = walkableCells[i];
+        if ((c.floor || 0) !== fl) continue;
+        if (!isWalkableGrid(c.x, c.z, fl)) continue;
+        var wp = gridToWorld(c.x, c.z);
+        var d = Math.hypot(wp.x - player.x, wp.z - player.z);
+        if (d < bestDist) { bestDist = d; best = wp; }
+    }
+    if (best) {
+        player.x = best.x;
+        player.z = best.z;
+        player.y = getFloorBaseY(fl) + 1.6;
+        player.vy = 0;
+        player.onGround = true;
+        camera.position.set(player.x, player.y, player.z);
+        showPickupMessage(fl === 1 ? '🏭 TELEPORTED TO FLOOR 2 (LEVEL 1: HABITABLE ZONE)' : '🏢 TELEPORTED TO FLOOR 1 (LEVEL 0: THE LOBBY)', 2200);
+    }
+    closeSecretTestMenu();
+}
+
+function teleportToNearestStair() {
+    if (!gameStarted || !hasSecondFloorActive() || backroomsStairs.length === 0) return;
+    sessionUsedTestMode = true;
+    var pFloor = getPlayerFloor();
+    var bestStair = backroomsStairs[0];
+    var bestDist = Infinity;
+    for (var i = 0; i < backroomsStairs.length; i++) {
+        var st = backroomsStairs[i];
+        var landing = pFloor === 1 ? st.topWorld : st.bottomWorld;
+        var d = Math.hypot(landing.x - player.x, landing.z - player.z);
+        if (d < bestDist) { bestDist = d; bestStair = st; }
+    }
+    var target = pFloor === 1 ? bestStair.topWorld : bestStair.bottomWorld;
+    player.x = target.x;
+    player.z = target.z;
+    player.y = getFloorBaseY(pFloor) + 1.6;
+    player.vy = 0;
+    player.onGround = true;
+    // Face directly toward the staircase opening!
+    var lookDirX = pFloor === 1 ? -bestStair.dx : bestStair.dx;
+    var lookDirZ = pFloor === 1 ? -bestStair.dz : bestStair.dz;
+    player.yaw = Math.atan2(-lookDirX, -lookDirZ);
+    player.pitch = 0;
+    camera.position.set(player.x, player.y, player.z);
+    showPickupMessage('🪜 TELEPORTED TO STAIRWELL', 1800);
+    closeSecretTestMenu();
+}
+
 function resolveSelectedMap() {
+    if (forceMapNextRun) {
+        var forced = forceMapNextRun;
+        forceMapNextRun = null;
+        return forced;
+    }
     if (saveData.settings.selectedMap === 'park') saveData.settings.selectedMap = 'forest';
-    // Dark Escape never has a map picker.
+    // Dark Escape never has a map picker unless forced via secret test menu.
     if (isDarkEscapeMode) {
         return ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
     }
@@ -819,6 +1084,7 @@ function updateUI() {
     document.getElementById('fov-set').value = saveData.settings.fov;
     document.getElementById('fov-d').textContent = saveData.settings.fov;
     document.getElementById('map-picker-enabled').checked = saveData.settings.mapPickerEnabled === true;
+    syncSecondFloorCheckboxes();
     populateMapPickers();
     applyMapPickerVisibility();
 
@@ -1145,7 +1411,7 @@ function loadTextures(callback) {
     }
 
     wallTexture = textureLoader.load(
-        'https://joercat.github.io/wall.png',
+        'assets/backrooms-wall.jpg',
         function () { checkDone(true);  _assetProbeDone(false); },
         undefined,
         function () { checkDone(false); _assetProbeDone(true);  }
@@ -1154,20 +1420,41 @@ function loadTextures(callback) {
     wallTexture.wrapT = THREE.RepeatWrapping;
 
     floorTexture = textureLoader.load(
-        'https://joercat.github.io/floor.jpg',
+        'assets/backrooms-floor.jpg',
         function () { checkDone(true);  _assetProbeDone(false); },
         undefined,
         function () { checkDone(false); _assetProbeDone(true);  }
     );
     floorTexture.wrapS = THREE.RepeatWrapping;
     floorTexture.wrapT = THREE.RepeatWrapping;
-    floorTexture.repeat.set(50, 50);
+    floorTexture.repeat.set(36, 36);
+
+    backroomsCeilTexture = textureLoader.load('assets/backrooms-ceiling.jpg');
+    backroomsCeilTexture.wrapS = THREE.RepeatWrapping;
+    backroomsCeilTexture.wrapT = THREE.RepeatWrapping;
+    backroomsCeilTexture.repeat.set(22, 22);
+
+    backroomsL1WallTexture = textureLoader.load('assets/backrooms-l1-wall.jpg');
+    backroomsL1WallTexture.wrapS = THREE.RepeatWrapping;
+    backroomsL1WallTexture.wrapT = THREE.RepeatWrapping;
+
+    backroomsL1FloorTexture = textureLoader.load('assets/backrooms-l1-floor.jpg');
+    backroomsL1FloorTexture.wrapS = THREE.RepeatWrapping;
+    backroomsL1FloorTexture.wrapT = THREE.RepeatWrapping;
+
+    backroomsL1CeilTexture = textureLoader.load('assets/backrooms-l1-ceiling.jpg');
+    backroomsL1CeilTexture.wrapS = THREE.RepeatWrapping;
+    backroomsL1CeilTexture.wrapT = THREE.RepeatWrapping;
+
+    crateTexture = textureLoader.load('assets/crate.jpg');
+    crateTexture.wrapS = THREE.RepeatWrapping;
+    crateTexture.wrapT = THREE.RepeatWrapping;
 
     // Probe two extra sprites (not blocking the game start).
-    textureLoader.load('https://joercat.github.io/ice.png',
+    textureLoader.load('assets/ice.png',
         function () { _assetProbeDone(false); }, undefined,
         function () { _assetProbeDone(true);  });
-    textureLoader.load('https://joercat.github.io/kanye.png',
+    textureLoader.load('assets/kanye.png',
         function () { _assetProbeDone(false); }, undefined,
         function () { _assetProbeDone(true);  });
 }
@@ -1265,23 +1552,23 @@ async function initAudio() {
             } catch (e) {
                 console.log('Custom audio failed, using default:', e);
                 kanye.usesCustomAudio = false;
-                audioBuffer = getAudioBufferFromCache('https://joercat.github.io/olive.wav');
+                audioBuffer = getAudioBufferFromCache('assets/olive.wav');
                 if (!audioBuffer) {
-                    var resp2 = await fetch('https://joercat.github.io/olive.wav');
+                    var resp2 = await fetch('assets/olive.wav');
                     var buf2 = await resp2.arrayBuffer();
                     audioBuffer = await audioCtx.decodeAudioData(buf2);
-                    setCachedAudioBuffer('https://joercat.github.io/olive.wav', audioBuffer);
+                    setCachedAudioBuffer('assets/olive.wav', audioBuffer);
                 }
                 audioReady = true;
             }
         } else {
             kanye.usesCustomAudio = false;
-            audioBuffer = getAudioBufferFromCache('https://joercat.github.io/olive.wav');
+            audioBuffer = getAudioBufferFromCache('assets/olive.wav');
             if (!audioBuffer) {
-                var resp3 = await fetch('https://joercat.github.io/olive.wav');
+                var resp3 = await fetch('assets/olive.wav');
                 var buf3 = await resp3.arrayBuffer();
                 audioBuffer = await audioCtx.decodeAudioData(buf3);
-                setCachedAudioBuffer('https://joercat.github.io/olive.wav', audioBuffer);
+                setCachedAudioBuffer('assets/olive.wav', audioBuffer);
             }
             audioReady = true;
         }
@@ -1459,10 +1746,275 @@ function generateMazeData(gridSize, seed) {
     return { maze: m, walkable: wc };
 }
 
+function ensureFloorConnected(m, gridSize, protectedSet, anchorCell) {
+    var dirs = [{ dx: -1, dz: 0 }, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
+
+    function floodFrom(startX, startZ) {
+        var vis = {};
+        if (!m[startX] || m[startX][startZ] !== 0) return vis;
+        var q = [{ x: startX, z: startZ }];
+        vis[startX + ',' + startZ] = true;
+        while (q.length > 0) {
+            var cur = q.shift();
+            for (var i = 0; i < dirs.length; i++) {
+                var nx = cur.x + dirs[i].dx;
+                var nz = cur.z + dirs[i].dz;
+                var nk = nx + ',' + nz;
+                if (nx < 1 || nx >= gridSize - 1 || nz < 1 || nz >= gridSize - 1) continue;
+                if (vis[nk]) continue;
+                if (m[nx][nz] !== 0) continue;
+                vis[nk] = true;
+                q.push({ x: nx, z: nz });
+            }
+        }
+        return vis;
+    }
+
+    var ax = anchorCell ? anchorCell.x : 1;
+    var az = anchorCell ? anchorCell.z : 1;
+    if (!m[ax] || m[ax][az] !== 0) {
+        for (var sx = 1; sx < gridSize - 1; sx++) {
+            for (var sz = 1; sz < gridSize - 1; sz++) {
+                if (m[sx][sz] === 0 && !protectedSet[sx + ',' + sz]) { ax = sx; az = sz; break; }
+            }
+            if (m[ax] && m[ax][az] === 0) break;
+        }
+    }
+
+    for (var pass = 0; pass < 80; pass++) {
+        var visited = floodFrom(ax, az);
+        var bridged = false;
+
+        for (var wx = 1; wx < gridSize - 1 && !bridged; wx++) {
+            for (var wz = 1; wz < gridSize - 1 && !bridged; wz++) {
+                if (m[wx][wz] !== 1) continue;
+                if (protectedSet[wx + ',' + wz]) continue;
+                var touchesVis = false;
+                var touchesUnvis = false;
+                for (var di = 0; di < dirs.length; di++) {
+                    var nx2 = wx + dirs[di].dx;
+                    var nz2 = wz + dirs[di].dz;
+                    if (nx2 < 1 || nx2 >= gridSize - 1 || nz2 < 1 || nz2 >= gridSize - 1) continue;
+                    if (m[nx2][nz2] !== 0) continue;
+                    if (isStairShaftCell(nx2, nz2)) continue;
+                    if (visited[nx2 + ',' + nz2]) touchesVis = true;
+                    else touchesUnvis = true;
+                }
+                if (touchesVis && touchesUnvis) {
+                    m[wx][wz] = 0;
+                    bridged = true;
+                }
+            }
+        }
+
+        if (!bridged) {
+            // Fill any tiny isolated 1-cell pocket walled off entirely by protected stairwell walls.
+            for (var fx = 1; fx < gridSize - 1; fx++) {
+                for (var fz = 1; fz < gridSize - 1; fz++) {
+                    if (m[fx][fz] === 0 && !isStairShaftCell(fx, fz) && !visited[fx + ',' + fz]) {
+                        m[fx][fz] = 1;
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
 function generateMaze() {
-    var data = generateMazeData(GRID_SIZE, Math.floor(Math.random() * 2147483646) + 1);
-    maze = data.maze;
-    walkableCells = data.walkable;
+    backroomsStairs = [];
+    stairShaftSet = {};
+    mazeFloors = [null, null];
+
+    var seed0 = Math.floor(Math.random() * 2147483645) + 1;
+    var data0 = generateMazeData(GRID_SIZE, seed0);
+
+    if (!hasSecondFloorActive()) {
+        maze = data0.maze;
+        mazeFloors[0] = maze;
+        walkableCells = [];
+        for (var i = 0; i < data0.walkable.length; i++) {
+            walkableCells.push({ x: data0.walkable[i].x, z: data0.walkable[i].z, floor: 0 });
+        }
+        return;
+    }
+
+    var seed1 = (seed0 * 48271) % 2147483645 + 1;
+    var data1 = generateMazeData(GRID_SIZE, seed1);
+    var m0 = data0.maze;
+    var m1 = data1.maze;
+
+    var protected0 = {};
+    var protected1 = {};
+    var targetStairs = GRID_SIZE >= 56 ? 5 : (GRID_SIZE >= 40 ? 4 : 3);
+    var cardinalDirs = [
+        { dx: 0, dz: 1 },
+        { dx: 0, dz: -1 },
+        { dx: 1, dz: 0 },
+        { dx: -1, dz: 0 }
+    ];
+
+    var allStairCandidates = [];
+    for (var gx = 4; gx < GRID_SIZE - 4; gx++) {
+        for (var gz = 4; gz < GRID_SIZE - 4; gz++) {
+            for (var di = 0; di < cardinalDirs.length; di++) {
+                var dir = cardinalDirs[di];
+                var px = -dir.dz, pz = dir.dx;
+                var inBounds = true;
+                for (var k = -1; k <= 4; k++) {
+                    for (var s = -1; s <= 1; s++) {
+                        var cx = gx + dir.dx * k + px * s;
+                        var cz = gz + dir.dz * k + pz * s;
+                        if (cx < 2 || cx >= GRID_SIZE - 2 || cz < 2 || cz >= GRID_SIZE - 2) {
+                            inBounds = false;
+                            break;
+                        }
+                    }
+                    if (!inBounds) break;
+                }
+                if (inBounds) {
+                    allStairCandidates.push({ sx: gx, sz: gz, dx: dir.dx, dz: dir.dz });
+                }
+            }
+        }
+    }
+    shuffle(allStairCandidates);
+
+    var spacingPasses = [11, 8, 6];
+    for (var sp = 0; sp < spacingPasses.length && backroomsStairs.length < targetStairs; sp++) {
+        var minDist = spacingPasses[sp];
+        for (var ci = 0; ci < allStairCandidates.length && backroomsStairs.length < targetStairs; ci++) {
+            var cand = allStairCandidates[ci];
+            var farEnough = true;
+            for (var si = 0; si < backroomsStairs.length; si++) {
+                var existing = backroomsStairs[si];
+                if (Math.hypot(cand.sx - existing.c0.x, cand.sz - existing.c0.z) < minDist) {
+                    farEnough = false;
+                    break;
+                }
+            }
+            if (!farEnough) continue;
+
+            // Ensure no overlap with any already-protected stairwell cells.
+            var perpX = -cand.dz, perpZ = cand.dx;
+            var overlaps = false;
+            for (var kk = -1; kk <= 4 && !overlaps; kk++) {
+                for (var ss = -1; ss <= 1; ss++) {
+                    var tx = cand.sx + cand.dx * kk + perpX * ss;
+                    var tz = cand.sz + cand.dz * kk + perpZ * ss;
+                    var tk = tx + ',' + tz;
+                    if (protected0[tk] || protected1[tk]) { overlaps = true; break; }
+                }
+            }
+            if (overlaps) continue;
+
+            var pre  = { x: cand.sx - cand.dx, z: cand.sz - cand.dz };
+            var c0   = { x: cand.sx, z: cand.sz };
+            var c1   = { x: cand.sx + cand.dx, z: cand.sz + cand.dz };
+            var c2   = { x: cand.sx + cand.dx * 2, z: cand.sz + cand.dz * 2 };
+            var c3   = { x: cand.sx + cand.dx * 3, z: cand.sz + cand.dz * 3 };
+            var post = { x: cand.sx + cand.dx * 4, z: cand.sz + cand.dz * 4 };
+
+            // Seal side walls along the 2-cell stairwell shaft (c1, c2) on BOTH floors.
+            for (var shaftStep = 1; shaftStep <= 2; shaftStep++) {
+                var shX = cand.sx + cand.dx * shaftStep;
+                var shZ = cand.sz + cand.dz * shaftStep;
+                var lx = shX - perpX, lz = shZ - perpZ;
+                var rx = shX + perpX, rz = shZ + perpZ;
+                m0[lx][lz] = 1; m1[lx][lz] = 1;
+                m0[rx][rz] = 1; m1[rx][rz] = 1;
+                protected0[lx + ',' + lz] = true; protected1[lx + ',' + lz] = true;
+                protected0[rx + ',' + rz] = true; protected1[rx + ',' + rz] = true;
+
+                m0[shX][shZ] = 0; m1[shX][shZ] = 0;
+                stairShaftSet[shX + ',' + shZ] = true;
+                protected0[shX + ',' + shZ] = true;
+                protected1[shX + ',' + shZ] = true;
+            }
+
+            // Floor 0 bottom landing & solid back wall under top landing.
+            m0[pre.x][pre.z] = 0;
+            m0[c0.x][c0.z] = 0;
+            m0[c3.x][c3.z] = 1;
+            protected0[pre.x + ',' + pre.z] = true;
+            protected0[c0.x + ',' + c0.z] = true;
+            protected0[c3.x + ',' + c3.z] = true;
+
+            // Floor 1 top landing & solid headwall above bottom landing.
+            m1[c0.x][c0.z] = 1;
+            m1[c3.x][c3.z] = 0;
+            m1[post.x][post.z] = 0;
+            protected1[c0.x + ',' + c0.z] = true;
+            protected1[c3.x + ',' + c3.z] = true;
+            protected1[post.x + ',' + post.z] = true;
+
+            var c0World = gridToWorld(c0.x, c0.z);
+            var c3World = gridToWorld(c3.x, c3.z);
+            backroomsStairs.push({
+                index: backroomsStairs.length,
+                c0: c0,
+                c1: c1,
+                c2: c2,
+                c3: c3,
+                dx: cand.dx,
+                dz: cand.dz,
+                originX: c0World.x + cand.dx * (CELL / 2),
+                originZ: c0World.z + cand.dz * (CELL / 2),
+                bottomWorld: c0World,
+                topWorld: c3World
+            });
+        }
+    }
+
+    var anchor0 = backroomsStairs.length > 0 ? backroomsStairs[0].c0 : { x: 1, z: 1 };
+    var anchor1 = backroomsStairs.length > 0 ? backroomsStairs[0].c3 : { x: 1, z: 1 };
+    ensureFloorConnected(m0, GRID_SIZE, protected0, anchor0);
+    ensureFloorConnected(m1, GRID_SIZE, protected1, anchor1);
+
+    maze = m0;
+    mazeFloors[0] = m0;
+    mazeFloors[1] = m1;
+
+    walkableCells = [];
+    for (var x0 = 1; x0 < GRID_SIZE - 1; x0++) {
+        for (var z0 = 1; z0 < GRID_SIZE - 1; z0++) {
+            if (isStairShaftCell(x0, z0)) continue;
+            if (m0[x0][z0] === 0) walkableCells.push({ x: x0, z: z0, floor: 0 });
+            if (m1[x0][z0] === 0) walkableCells.push({ x: x0, z: z0, floor: 1 });
+        }
+    }
+}
+
+function getStairAt(wx, wz) {
+    if (!hasSecondFloorActive() || backroomsStairs.length === 0) return null;
+    for (var i = 0; i < backroomsStairs.length; i++) {
+        var st = backroomsStairs[i];
+        var relX = wx - st.originX;
+        var relZ = wz - st.originZ;
+        var along = relX * st.dx + relZ * st.dz;
+        if (along >= 0 && along <= CELL * 2) {
+            var across = Math.abs(relX * (-st.dz) + relZ * st.dx);
+            if (across <= CELL / 2) {
+                return st;
+            }
+        }
+    }
+    return null;
+}
+
+function getStairSurfaceY(st, wx, wz) {
+    var relX = wx - st.originX;
+    var relZ = wz - st.originZ;
+    var along = relX * st.dx + relZ * st.dz;
+    var t = Math.max(0, Math.min(1, along / (CELL * 2)));
+    return t * SECOND_FLOOR_Y;
+}
+
+function getGroundSurfaceAt(wx, wz, currentFootY) {
+    if (!hasSecondFloorActive()) return 0;
+    var st = getStairAt(wx, wz);
+    if (st) return getStairSurfaceY(st, wx, wz);
+    return currentFootY >= SECOND_FLOOR_Y * 0.5 ? SECOND_FLOOR_Y : 0;
 }
 
 // ==========================================
@@ -1501,10 +2053,8 @@ function getEndlessCell(wx, wz) {
     return chunk.maze[lx][lz];
 }
 
-// playerY: optional current player Y — when provided, decorations the player is standing
-// on top of (playerY > decor top + body height) are skipped so the player isn't pushed
-// off sideways while standing on an object.
-function isWalkableWorld(wx, wz, radius, playerY) {
+// playerY: optional current player eye Y; baseYOverride: optional explicit foot height (e.g. nextbot baseY).
+function isWalkableWorld(wx, wz, radius, playerY, baseYOverride) {
     if (radius === undefined) radius = 0.35;
     var checks = [
         { x: wx, z: wz },
@@ -1520,9 +2070,53 @@ function isWalkableWorld(wx, wz, radius, playerY) {
         }
         for (var ed = 0; ed < endlessDecorations.length; ed++) {
             var edec = endlessDecorations[ed];
-            // Skip if player is already elevated on top of this decoration.
             if (playerY !== undefined && edec.height && playerY > edec.height + 1.55) continue;
             if (Math.hypot(wx - edec.x, wz - edec.z) < edec.radius + radius) return false;
+        }
+        return true;
+    }
+
+    var multi = hasSecondFloorActive();
+    var footY = baseYOverride !== undefined
+        ? baseYOverride
+        : (playerY !== undefined ? playerY - 1.6 : 0);
+
+    if (multi) {
+        var centerStair = getStairAt(wx, wz);
+        if (centerStair) {
+            for (var sci = 0; sci < checks.length; sci++) {
+                var sp = checks[sci];
+                var sg = worldToGrid(sp.x, sp.z);
+                if (sg.x < 0 || sg.x >= GRID_SIZE || sg.z < 0 || sg.z >= GRID_SIZE) return false;
+                if (getStairAt(sp.x, sp.z) === centerStair) continue;
+                if (sg.x === centerStair.c0.x && sg.z === centerStair.c0.z && footY < 1.35) continue;
+                if (sg.x === centerStair.c3.x && sg.z === centerStair.c3.z && footY > SECOND_FLOOR_Y - 1.35) continue;
+                return false;
+            }
+            return true;
+        }
+
+        var activeFloor = footY >= SECOND_FLOOR_Y * 0.5 ? 1 : 0;
+        var activeMaze = getMazeForFloor(activeFloor);
+        for (var mci = 0; mci < checks.length; mci++) {
+            var mp = checks[mci];
+            var mg = worldToGrid(mp.x, mp.z);
+            if (mg.x < 0 || mg.x >= GRID_SIZE || mg.z < 0 || mg.z >= GRID_SIZE) return false;
+            var pst = getStairAt(mp.x, mp.z);
+            if (pst) {
+                if (activeFloor === 0 && mg.x === pst.c1.x && mg.z === pst.c1.z) continue;
+                if (activeFloor === 1 && mg.x === pst.c2.x && mg.z === pst.c2.z) continue;
+                return false;
+            }
+            if (!activeMaze[mg.x] || activeMaze[mg.x][mg.z] !== 0) return false;
+        }
+
+        for (var mdi = 0; mdi < decorations.length; mdi++) {
+            var mdec = decorations[mdi];
+            if ((mdec.floor || 0) !== activeFloor) continue;
+            var mBaseY = mdec.baseY || 0;
+            if (playerY !== undefined && mdec.height && playerY > mBaseY + mdec.height + 1.55) continue;
+            if (Math.hypot(wx - mdec.x, wz - mdec.z) < mdec.radius + radius) return false;
         }
         return true;
     }
@@ -1535,25 +2129,29 @@ function isWalkableWorld(wx, wz, radius, playerY) {
 
     for (var di = 0; di < decorations.length; di++) {
         var dec = decorations[di];
-        // Skip horizontal collision if the player is already standing on top of this decor.
-        if (playerY !== undefined && dec.height && playerY > dec.height + 1.55) continue;
+        var dBaseY = dec.baseY || 0;
+        if (playerY !== undefined && dec.height && playerY > dBaseY + dec.height + 1.55) continue;
         var dist = Math.hypot(wx - dec.x, wz - dec.z);
         if (dist < dec.radius + radius) return false;
     }
     return true;
 }
 
-function isWalkableGrid(gx, gz) {
+function isWalkableGrid(gx, gz, floor) {
     if (isEndlessMode) {
         var wx = (gx + 0.5) * CELL;
         var wz = (gz + 0.5) * CELL;
         return getEndlessCell(wx, wz) === 0;
     }
+    var fl = floor || 0;
     if (gx < 0 || gx >= GRID_SIZE || gz < 0 || gz >= GRID_SIZE) return false;
-    if (!maze[gx] || maze[gx][gz] !== 0) return false;
+    if (isStairShaftCell(gx, gz)) return false;
+    var flMaze = getMazeForFloor(fl);
+    if (!flMaze || !flMaze[gx] || flMaze[gx][gz] !== 0) return false;
 
     var worldPos = gridToWorld(gx, gz);
     for (var i = 0; i < decorations.length; i++) {
+        if ((decorations[i].floor || 0) !== fl) continue;
         if (Math.hypot(worldPos.x - decorations[i].x, worldPos.z - decorations[i].z) < decorations[i].radius + 0.55) {
             return false;
         }
@@ -1562,52 +2160,63 @@ function isWalkableGrid(gx, gz) {
 }
 
 // ---- Pathfinding-specific walkability ----
-// Uses a precomputed obstacle grid so A* is cheap and can find a way around
-// forest trees/props and the crates/barrels/gurneys on the other maps.
 function rebuildPathGrid() {
     pathBlockedGrid = [];
+    pathBlockedGridFloors = [[], []];
     if (isEndlessMode) return;
     var gx, gz;
     for (gx = 0; gx < GRID_SIZE; gx++) {
         pathBlockedGrid[gx] = [];
-        for (gz = 0; gz < GRID_SIZE; gz++) pathBlockedGrid[gx][gz] = false;
+        pathBlockedGridFloors[0][gx] = [];
+        pathBlockedGridFloors[1][gx] = [];
+        for (gz = 0; gz < GRID_SIZE; gz++) {
+            pathBlockedGrid[gx][gz] = false;
+            pathBlockedGridFloors[0][gx][gz] = false;
+            pathBlockedGridFloors[1][gx][gz] = false;
+        }
     }
 
-    // The Forest is fully open: trees/props are circular obstacles handled by local
-    // avoidance, not grid cells. Other maps retain property blockers for route planning.
     if (isForestMap()) return;
 
     var margin = 0.2;
     for (var di = 0; di < decorations.length; di++) {
         var dec = decorations[di];
         if (!dec.blockPath) continue;
+        var fl = dec.floor || 0;
         var dg = worldToGrid(dec.x, dec.z);
         var half = Math.ceil((dec.radius + margin) / CELL);
         for (gx = Math.max(0, dg.x - half); gx <= Math.min(GRID_SIZE - 1, dg.x + half); gx++) {
             for (gz = Math.max(0, dg.z - half); gz <= Math.min(GRID_SIZE - 1, dg.z + half); gz++) {
                 var wp = gridToWorld(gx, gz);
                 if (Math.hypot(wp.x - dec.x, wp.z - dec.z) <= dec.radius + margin) {
-                    pathBlockedGrid[gx][gz] = true;
+                    pathBlockedGridFloors[fl][gx][gz] = true;
+                    if (fl === 0) pathBlockedGrid[gx][gz] = true;
                 }
             }
         }
     }
 }
 
-function isPathWalkableGrid(gx, gz) {
+function isPathWalkableGrid(gx, gz, floor) {
     if (isEndlessMode) {
         var wx = (gx + 0.5) * CELL;
         var wz = (gz + 0.5) * CELL;
         return getEndlessCell(wx, wz) === 0;
     }
+    var fl = floor || 0;
     if (gx < 0 || gx >= GRID_SIZE || gz < 0 || gz >= GRID_SIZE) return false;
-    if (!maze[gx] || maze[gx][gz] !== 0) return false;
-    if (pathBlockedGrid && pathBlockedGrid[gx] && pathBlockedGrid[gx][gz]) return false;
+    var flMaze = getMazeForFloor(fl);
+    if (!flMaze || !flMaze[gx] || flMaze[gx][gz] !== 0) return false;
+    var pGrid = pathBlockedGridFloors[fl] || pathBlockedGrid;
+    if (pGrid && pGrid[gx] && pGrid[gx][gz]) return false;
     return true;
 }
 
-function findNearestPathWalkableGrid(startGx, startGz, maxRadius) {
-    if (isPathWalkableGrid(startGx, startGz)) return { x: startGx, z: startGz };
+function findNearestPathWalkableGrid(startGx, startGz, maxRadius, floor) {
+    var fl = floor || 0;
+    if (!isStairShaftCell(startGx, startGz) && isPathWalkableGrid(startGx, startGz, fl)) {
+        return { x: startGx, z: startGz };
+    }
     maxRadius = maxRadius || 3;
     var best = null;
     var bestDist = Infinity;
@@ -1617,7 +2226,8 @@ function findNearestPathWalkableGrid(startGx, startGz, maxRadius) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
                 var gx = startGx + dx;
                 var gz = startGz + dz;
-                if (!isPathWalkableGrid(gx, gz)) continue;
+                if (isStairShaftCell(gx, gz)) continue;
+                if (!isPathWalkableGrid(gx, gz, fl)) continue;
                 var d = Math.hypot(dx, dz);
                 if (d < bestDist) { bestDist = d; best = { x: gx, z: gz }; }
             }
@@ -1631,18 +2241,19 @@ function findNearestPathWalkableGrid(startGx, startGz, maxRadius) {
 // BUILD WORLD
 // ==========================================
 function getMapMats() {
-    // Dark Escape reuses the exact same textures/map appearance as the normal
-    // map, but tints the materials dark and makes them respond to light. This
-    // keeps the map looking like Backrooms/Hospital while staying genuinely dark.
     if (isDarkEscapeMode) {
         var darkKey = 'dark-' + currentMap;
         if (MAP_MATS_CACHE[darkKey]) return MAP_MATS_CACHE[darkKey];
 
         var dWallMat, dFloorMat, dCeilMat, dFog;
+        var dUpperWallMat = null, dUpperFloorMat = null, dUpperCeilMat = null;
         if (currentMap === 'backrooms') {
-            dWallMat = markShared(new THREE.MeshLambertMaterial({ map: wallTexture, color: 0x2b2c33 }));
-            dFloorMat = markShared(new THREE.MeshLambertMaterial({ map: floorTexture, color: 0x25262b }));
-            dCeilMat = markShared(new THREE.MeshLambertMaterial({ color: 0x0c0d11 }));
+            dWallMat = markShared(new THREE.MeshLambertMaterial({ map: wallTexture, color: 0x353328 }));
+            dFloorMat = markShared(new THREE.MeshLambertMaterial({ map: floorTexture, color: 0x2c2a21 }));
+            dCeilMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsCeilTexture, color: 0x20201d }));
+            dUpperWallMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsL1WallTexture, color: 0x2e3138 }));
+            dUpperFloorMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsL1FloorTexture, color: 0x282b31 }));
+            dUpperCeilMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsL1CeilTexture, color: 0x1a1c21 }));
             dFog = 0x030304;
         } else if (currentMap === 'hospital') {
             dWallMat = markShared(new THREE.MeshLambertMaterial({ color: 0x3a3d45 }));
@@ -1660,7 +2271,11 @@ function getMapMats() {
             wallMat: dWallMat,
             floorMat: dFloorMat,
             ceilMat: dCeilMat,
+            upperWallMat: dUpperWallMat,
+            upperFloorMat: dUpperFloorMat,
+            upperCeilMat: dUpperCeilMat,
             fogColor: dFog,
+            upperFogColor: dFog,
             outdoor: false,
             dark: true
         };
@@ -1671,11 +2286,16 @@ function getMapMats() {
     if (MAP_MATS_CACHE[currentMap]) return MAP_MATS_CACHE[currentMap];
 
     var wallMat, floorMat, ceilMat, fogColor, outdoor = false;
+    var upperWallMat = null, upperFloorMat = null, upperCeilMat = null, upperFogColor = null;
     if (currentMap === 'backrooms') {
         wallMat = markShared(new THREE.MeshBasicMaterial({ map: wallTexture }));
         floorMat = markShared(new THREE.MeshBasicMaterial({ map: floorTexture }));
-        ceilMat = markShared(new THREE.MeshBasicMaterial({ color: 0x2a2a2a }));
-        fogColor = 0x1a1a1a;
+        ceilMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsCeilTexture }));
+        upperWallMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsL1WallTexture }));
+        upperFloorMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsL1FloorTexture }));
+        upperCeilMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsL1CeilTexture }));
+        fogColor = 0x211e14;
+        upperFogColor = 0x1a1e24;
     } else if (isForestMap()) {
         wallMat = markShared(new THREE.MeshBasicMaterial({ color: 0x3f6f3f }));
         floorMat = markShared(new THREE.MeshBasicMaterial({ map: getForestGroundTexture() }));
@@ -1689,7 +2309,17 @@ function getMapMats() {
         fogColor = 0x1a2a1a;
     }
 
-    var mats = { wallMat: wallMat, floorMat: floorMat, ceilMat: ceilMat, fogColor: fogColor, outdoor: outdoor };
+    var mats = {
+        wallMat: wallMat,
+        floorMat: floorMat,
+        ceilMat: ceilMat,
+        upperWallMat: upperWallMat,
+        upperFloorMat: upperFloorMat,
+        upperCeilMat: upperCeilMat,
+        fogColor: fogColor,
+        upperFogColor: upperFogColor || fogColor,
+        outdoor: outdoor
+    };
     MAP_MATS_CACHE[currentMap] = mats;
     return mats;
 }
@@ -1717,12 +2347,308 @@ function ensureAmbientLight() {
     if (scene.children.indexOf(worldAmbientLight) === -1) scene.add(worldAmbientLight);
 }
 
+// Builds a single merged horizontal BufferGeometry plane across grid cells, skipping stairwell holes when skipStairHoles=true.
+function buildGridHorizontalMesh(yLevel, facingUp, material, skipStairHoles, uvPerCell) {
+    var cellCount = 0;
+    for (var cx = 0; cx < GRID_SIZE; cx++) {
+        for (var cz = 0; cz < GRID_SIZE; cz++) {
+            if (skipStairHoles && isStairShaftCell(cx, cz)) continue;
+            cellCount++;
+        }
+    }
+    if (cellCount === 0) return null;
+
+    var positions = new Float32Array(cellCount * 6 * 3);
+    var normals   = new Float32Array(cellCount * 6 * 3);
+    var uvs       = new Float32Array(cellCount * 6 * 2);
+    var ny = facingUp ? 1 : -1;
+    var uvScale = uvPerCell || 1;
+    var halfWorld = (GRID_SIZE * CELL) / 2;
+    var vi = 0;
+    var ui = 0;
+
+    function pushVert(px, py, pz, u, v) {
+        positions[vi * 3]     = px;
+        positions[vi * 3 + 1] = py;
+        positions[vi * 3 + 2] = pz;
+        normals[vi * 3]       = 0;
+        normals[vi * 3 + 1]   = ny;
+        normals[vi * 3 + 2]   = 0;
+        uvs[ui * 2]           = u;
+        uvs[ui * 2 + 1]       = v;
+        vi++;
+        ui++;
+    }
+
+    for (var gx = 0; gx < GRID_SIZE; gx++) {
+        for (var gz = 0; gz < GRID_SIZE; gz++) {
+            if (skipStairHoles && isStairShaftCell(gx, gz)) continue;
+            var x0 = gx * CELL - halfWorld;
+            var x1 = x0 + CELL;
+            var z0 = gz * CELL - halfWorld;
+            var z1 = z0 + CELL;
+            var u0 = gx * uvScale, u1 = (gx + 1) * uvScale;
+            var v0 = gz * uvScale, v1 = (gz + 1) * uvScale;
+
+            if (facingUp) {
+                pushVert(x0, yLevel, z1, u0, v1);
+                pushVert(x1, yLevel, z1, u1, v1);
+                pushVert(x1, yLevel, z0, u1, v0);
+
+                pushVert(x0, yLevel, z1, u0, v1);
+                pushVert(x1, yLevel, z0, u1, v0);
+                pushVert(x0, yLevel, z0, u0, v0);
+            } else {
+                pushVert(x0, yLevel, z0, u0, v0);
+                pushVert(x1, yLevel, z0, u1, v0);
+                pushVert(x1, yLevel, z1, u1, v1);
+
+                pushVert(x0, yLevel, z0, u0, v0);
+                pushVert(x1, yLevel, z1, u1, v1);
+                pushVert(x0, yLevel, z1, u0, v1);
+            }
+        }
+    }
+
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    return new THREE.Mesh(geo, material);
+}
+
+function buildStaircaseMeshes(dk) {
+    var stepMat = dk
+        ? new THREE.MeshLambertMaterial({ map: backroomsL1WallTexture, color: 0x353942 })
+        : new THREE.MeshBasicMaterial({ map: backroomsL1WallTexture, color: 0x9aa0a8 });
+    var treadMat = dk
+        ? new THREE.MeshLambertMaterial({ map: backroomsL1FloorTexture, color: 0x3e424c })
+        : new THREE.MeshBasicMaterial({ map: backroomsL1FloorTexture, color: 0xb0b5bd });
+    var railMat = dk
+        ? new THREE.MeshLambertMaterial({ color: 0x2e343d })
+        : new THREE.MeshBasicMaterial({ color: 0x5c6470 });
+    var safetyMat = dk
+        ? new THREE.MeshLambertMaterial({ color: 0x7c6518 })
+        : new THREE.MeshBasicMaterial({ color: 0xd4a72c });
+    var signMat = dk
+        ? new THREE.MeshBasicMaterial({ color: 0x2b6b58 })
+        : new THREE.MeshBasicMaterial({ color: 0x3ddc97 });
+
+    var numSteps = 16;
+    var totalRun = CELL * 2;
+    var stepRun = totalRun / numSteps;
+    var stepRise = SECOND_FLOOR_Y / numSteps;
+    var slopeAngle = Math.atan2(SECOND_FLOOR_Y, totalRun);
+    var railLen = Math.hypot(totalRun, SECOND_FLOOR_Y);
+
+    for (var si = 0; si < backroomsStairs.length; si++) {
+        var st = backroomsStairs[si];
+        var group = new THREE.Group();
+
+        for (var s = 0; s < numSteps; s++) {
+            var h = (s + 1) * stepRise;
+            var zCenter = (s + 0.5) * stepRun;
+            var riserBox = new THREE.Mesh(new THREE.BoxGeometry(CELL - 0.02, h, stepRun + 0.02), stepMat);
+            riserBox.position.set(0, h / 2, zCenter);
+            group.add(riserBox);
+
+            var treadCap = new THREE.Mesh(new THREE.BoxGeometry(CELL - 0.02, 0.04, stepRun), treadMat);
+            treadCap.position.set(0, h + 0.01, zCenter);
+            group.add(treadCap);
+
+            if (s === 0 || s === numSteps - 1) {
+                var nosing = new THREE.Mesh(new THREE.BoxGeometry(CELL - 0.14, 0.05, 0.09), safetyMat);
+                nosing.position.set(0, h + 0.02, s === 0 ? zCenter - stepRun / 2 + 0.05 : zCenter + stepRun / 2 - 0.05);
+                group.add(nosing);
+            }
+        }
+
+        // Structural slab collar sealing y = WALL_H .. SECOND_FLOOR_Y around the stairwell opening.
+        var slabH = SECOND_FLOOR_Y - WALL_H + 0.06;
+        var slabCenterY = (WALL_H + SECOND_FLOOR_Y) / 2;
+
+        var leftCollar = new THREE.Mesh(new THREE.BoxGeometry(0.28, slabH, totalRun + 0.4), stepMat);
+        leftCollar.position.set(-CELL / 2 + 0.06, slabCenterY, totalRun / 2);
+        group.add(leftCollar);
+
+        var rightCollar = new THREE.Mesh(new THREE.BoxGeometry(0.28, slabH, totalRun + 0.4), stepMat);
+        rightCollar.position.set(CELL / 2 - 0.06, slabCenterY, totalRun / 2);
+        group.add(rightCollar);
+
+        var frontHeader = new THREE.Mesh(new THREE.BoxGeometry(CELL + 0.2, slabH, 0.36), stepMat);
+        frontHeader.position.set(0, slabCenterY, -0.06);
+        group.add(frontHeader);
+
+        // Glowing exit/level sign on the stairwell header ("LEVEL 1 ↑" indicator bar).
+        var signBacking = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.26, 0.08), railMat);
+        signBacking.position.set(0, WALL_H - 0.22, -0.24);
+        group.add(signBacking);
+        var signFace = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.18, 0.03), signMat);
+        signFace.position.set(0, WALL_H - 0.22, -0.29);
+        group.add(signFace);
+
+        // Flush steel handrails along both side walls.
+        for (var side = -1; side <= 1; side += 2) {
+            var rx = side * (CELL / 2 - 0.14);
+            var rail = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, railLen, 6), railMat);
+            rail.rotation.x = Math.PI / 2 - slopeAngle;
+            rail.position.set(rx, SECOND_FLOOR_Y / 2 + 0.95, totalRun / 2);
+            group.add(rail);
+
+            for (var p = 0; p <= 4; p++) {
+                var frac = p / 4;
+                var post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.95, 6), railMat);
+                post.position.set(rx, frac * SECOND_FLOOR_Y + 0.475, frac * totalRun);
+                group.add(post);
+            }
+        }
+
+        group.position.set(st.originX, 0, st.originZ);
+        group.rotation.y = Math.atan2(st.dx, st.dz);
+        scene.add(group);
+    }
+}
+
+function canBlockFloorCellWithoutCut(m, gx, gz, blockedSet) {
+    var cDirs = [{ dx: 1, dz: 0 }, { dx: -1, dz: 0 }, { dx: 0, dz: 1 }, { dx: 0, dz: -1 }];
+    var openNeighbors = [];
+    for (var i = 0; i < cDirs.length; i++) {
+        var nx = gx + cDirs[i].dx, nz = gz + cDirs[i].dz;
+        if (m[nx] && m[nx][nz] === 0 && !isStairShaftCell(nx, nz) && !blockedSet[nx + ',' + nz]) {
+            openNeighbors.push({ x: nx, z: nz });
+        }
+    }
+    if (openNeighbors.length < 2) return false;
+
+    var start = openNeighbors[0];
+    var vis = {};
+    vis[start.x + ',' + start.z] = true;
+    var q = [start];
+    while (q.length > 0) {
+        var cur = q.shift();
+        for (var d = 0; d < 4; d++) {
+            var ux = cur.x + cDirs[d].dx, uz = cur.z + cDirs[d].dz;
+            if (Math.abs(ux - gx) > 2 || Math.abs(uz - gz) > 2) continue;
+            if (ux === gx && uz === gz) continue;
+            if (ux < 1 || ux >= GRID_SIZE - 1 || uz < 1 || uz >= GRID_SIZE - 1) continue;
+            var uk = ux + ',' + uz;
+            if (vis[uk] || blockedSet[uk] || isStairShaftCell(ux, uz)) continue;
+            if (!m[ux] || m[ux][uz] !== 0) continue;
+            vis[uk] = true;
+            q.push({ x: ux, z: uz });
+        }
+    }
+    for (var k = 1; k < openNeighbors.length; k++) {
+        if (!vis[openNeighbors[k].x + ',' + openNeighbors[k].z]) return false;
+    }
+    return true;
+}
+
+function addBackroomsLevel1Decorations() {
+    var dk = isDarkEscapeMode;
+    var baseY = SECOND_FLOOR_Y;
+    var m1 = getMazeForFloor(1);
+    var blockedSet = {};
+    var crateMat = dk
+        ? new THREE.MeshLambertMaterial({ map: crateTexture, color: 0x3b352c })
+        : new THREE.MeshBasicMaterial({ map: crateTexture });
+    var pillarMat = dk
+        ? new THREE.MeshLambertMaterial({ map: backroomsL1WallTexture, color: 0x32353d })
+        : new THREE.MeshBasicMaterial({ map: backroomsL1WallTexture, color: 0xb6bcc4 });
+    var stripeMat = dk
+        ? new THREE.MeshLambertMaterial({ color: 0x7c6318 })
+        : new THREE.MeshBasicMaterial({ color: 0xd4a528 });
+    var pipeMat = dk
+        ? new THREE.MeshLambertMaterial({ color: 0x262b33 })
+        : new THREE.MeshBasicMaterial({ color: 0x525a66 });
+    var puddleMat = dk
+        ? new THREE.MeshLambertMaterial({ color: 0x16222c, transparent: true, opacity: 0.72 })
+        : new THREE.MeshBasicMaterial({ color: 0x3a4b59, transparent: true, opacity: 0.58 });
+
+    var upperCells = walkableCells.filter(function (c) { return (c.floor || 0) === 1; });
+    shuffle(upperCells);
+    var propBudget = Math.min(Math.max(18, Math.floor(GRID_SIZE * 0.9)), upperCells.length);
+    var placed = [];
+
+    for (var i = 0; i < upperCells.length && placed.length < propBudget; i++) {
+        var cell = upperCells[i];
+        var nearStair = false;
+        for (var si = 0; si < backroomsStairs.length; si++) {
+            if (Math.hypot(cell.x - backroomsStairs[si].c3.x, cell.z - backroomsStairs[si].c3.z) < 2.2) {
+                nearStair = true;
+                break;
+            }
+        }
+        if (nearStair) continue;
+
+        var pos = gridToWorld(cell.x, cell.z);
+        var fx = pos.x + (Math.random() - 0.5) * 0.4;
+        var fz = pos.z + (Math.random() - 0.5) * 0.4;
+
+        var tooClose = false;
+        for (var pi = 0; pi < placed.length; pi++) {
+            if (Math.hypot(fx - placed[pi].x, fz - placed[pi].z) < 5.0) { tooClose = true; break; }
+        }
+        if (tooClose) continue;
+
+        var canBlock = canBlockFloorCellWithoutCut(m1, cell.x, cell.z, blockedSet);
+        var roll = canBlock ? Math.random() : 0.85;
+        placed.push({ x: fx, z: fz });
+
+        if (roll < 0.50) {
+            // Backrooms Level 1 ("Habitable Zone") wooden supply crate — jumpable!
+            blockedSet[cell.x + ',' + cell.z] = true;
+            var crateH = 0.85;
+            var crate = new THREE.Mesh(new THREE.BoxGeometry(0.92, crateH, 0.92), crateMat);
+            crate.position.set(fx, baseY + crateH / 2, fz);
+            crate.rotation.y = Math.random() * 0.5 - 0.25;
+            scene.add(crate);
+            decorations.push({
+                x: fx, z: fz, baseY: baseY, floor: 1,
+                radius: 0.62, height: crateH, jumpable: true, blockPath: true, type: 'crate'
+            });
+        } else if (roll < 0.78) {
+            // Parking-garage structural concrete column with yellow safety band.
+            blockedSet[cell.x + ',' + cell.z] = true;
+            var colGroup = new THREE.Group();
+            var col = new THREE.Mesh(new THREE.BoxGeometry(0.76, SECOND_WALL_H, 0.76), pillarMat);
+            col.position.y = SECOND_WALL_H / 2;
+            colGroup.add(col);
+
+            var band = new THREE.Mesh(new THREE.BoxGeometry(0.80, 0.26, 0.80), stripeMat);
+            band.position.y = 0.55;
+            colGroup.add(band);
+
+            colGroup.position.set(fx, baseY, fz);
+            scene.add(colGroup);
+            decorations.push({
+                x: fx, z: fz, baseY: baseY, floor: 1,
+                radius: 0.55, height: SECOND_WALL_H, jumpable: false, blockPath: true, type: 'pillar'
+            });
+        } else {
+            // Almond-water / condensation puddle + overhead industrial pipe segment (non-blocking!).
+            var puddle = new THREE.Mesh(
+                new THREE.CircleGeometry(0.55 + Math.random() * 0.45, 14),
+                puddleMat
+            );
+            puddle.rotation.x = -Math.PI / 2;
+            puddle.position.set(fx, baseY + 0.025, fz);
+            scene.add(puddle);
+
+            var pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, CELL, 8), pipeMat);
+            pipe.rotation.z = Math.PI / 2;
+            if (Math.random() < 0.5) pipe.rotation.y = Math.PI / 2;
+            pipe.position.set(pos.x, baseY + SECOND_WALL_H - 0.16, pos.z);
+            scene.add(pipe);
+        }
+    }
+}
+
 function buildWorld() {
     var mats = getMapMats();
     scene.background = new THREE.Color(mats.fogColor);
     var fogNear, fogFar;
     if (isDarkEscapeMode) {
-        // Dark Escape: almost no visibility without the flashlight (updated live).
         fogNear = 1.0;
         fogFar = 6.0;
     } else {
@@ -1732,7 +2658,6 @@ function buildWorld() {
     scene.fog = new THREE.Fog(mats.fogColor, fogNear, fogFar);
     decorations = [];
 
-    // Static walls are drawn with a single instanced mesh per world => huge CPU/GPU memory savings.
     var wallCount = 0;
     for (var x = 0; x < GRID_SIZE; x++) {
         for (var z = 0; z < GRID_SIZE; z++) {
@@ -1759,17 +2684,62 @@ function buildWorld() {
         scene.add(walls);
     }
 
-    var floorSize = GRID_SIZE * CELL;
-    var floor = new THREE.Mesh(getFloorGeo(floorSize), mats.floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0.01;
-    scene.add(floor);
+    if (hasSecondFloorActive() && mazeFloors[1]) {
+        // Two-story Backrooms: Level 0 ("The Lobby") below + Level 1 ("Habitable Zone") above,
+        // connected through real stairwell cutouts in the acoustic ceiling & concrete slab.
+        var f0Floor = buildGridHorizontalMesh(0.01, true, mats.floorMat, false, 1.5);
+        if (f0Floor) scene.add(f0Floor);
 
-    if (!mats.outdoor && mats.ceilMat) {
-        var ceiling = new THREE.Mesh(getFloorGeo(floorSize), mats.ceilMat);
-        ceiling.rotation.x = Math.PI / 2;
-        ceiling.position.y = WALL_H;
-        scene.add(ceiling);
+        var f0Ceil = buildGridHorizontalMesh(WALL_H, false, mats.ceilMat, true, 1.0);
+        if (f0Ceil) scene.add(f0Ceil);
+
+        var m1 = mazeFloors[1];
+        var wallCountUpper = 0;
+        for (var ux = 0; ux < GRID_SIZE; ux++) {
+            for (var uz = 0; uz < GRID_SIZE; uz++) {
+                if (m1[ux][uz] === 1) wallCountUpper++;
+            }
+        }
+        if (wallCountUpper > 0) {
+            var upperWalls = new THREE.InstancedMesh(getSharedBoxUpper(), mats.upperWallMat || mats.wallMat, wallCountUpper);
+            upperWalls.instanceMatrix.setUsage(THREE.StaticDrawUsage || 0);
+            var dummyU = new THREE.Object3D();
+            var uwi = 0;
+            for (var wx2 = 0; wx2 < GRID_SIZE; wx2++) {
+                for (var wz2 = 0; wz2 < GRID_SIZE; wz2++) {
+                    if (m1[wx2][wz2] !== 1) continue;
+                    var pos2 = gridToWorld(wx2, wz2);
+                    dummyU.position.set(pos2.x, SECOND_FLOOR_Y + SECOND_WALL_H / 2, pos2.z);
+                    dummyU.rotation.set(0, 0, 0);
+                    dummyU.updateMatrix();
+                    upperWalls.setMatrixAt(uwi++, dummyU.matrix);
+                }
+            }
+            upperWalls.instanceMatrix.needsUpdate = true;
+            scene.add(upperWalls);
+        }
+
+        var f1Floor = buildGridHorizontalMesh(SECOND_FLOOR_Y + 0.01, true, mats.upperFloorMat || mats.floorMat, true, 1.25);
+        if (f1Floor) scene.add(f1Floor);
+
+        var f1Ceil = buildGridHorizontalMesh(SECOND_FLOOR_Y + SECOND_WALL_H, false, mats.upperCeilMat || mats.ceilMat, false, 1.0);
+        if (f1Ceil) scene.add(f1Ceil);
+
+        buildStaircaseMeshes(isDarkEscapeMode);
+        addBackroomsLevel1Decorations();
+    } else {
+        var floorSize = GRID_SIZE * CELL;
+        var floor = new THREE.Mesh(getFloorGeo(floorSize), mats.floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = 0.01;
+        scene.add(floor);
+
+        if (!mats.outdoor && mats.ceilMat) {
+            var ceiling = new THREE.Mesh(getFloorGeo(floorSize), mats.ceilMat);
+            ceiling.rotation.x = Math.PI / 2;
+            ceiling.position.y = WALL_H;
+            scene.add(ceiling);
+        }
     }
 
     if (currentMap === 'hospital') addHospitalDecorations();
@@ -2146,7 +3116,8 @@ function addForestDecorations() {
 // ==========================================
 // A* PATHFINDING
 // ==========================================
-function findPath(startGx, startGz, endGx, endGz, maxIterations) {
+function findPath(startGx, startGz, endGx, endGz, maxIterations, floor) {
+    var fl = floor || 0;
     var walkCheck;
     if (isEndlessMode) {
         walkCheck = function (gx, gz) {
@@ -2155,13 +3126,16 @@ function findPath(startGx, startGz, endGx, endGz, maxIterations) {
             return getEndlessCell(wx, wz) === 0;
         };
     } else {
-        walkCheck = isPathWalkableGrid;
+        walkCheck = function (gx, gz) {
+            if (isStairShaftCell(gx, gz)) return false;
+            return isPathWalkableGrid(gx, gz, fl);
+        };
     }
 
-    var startSnap = findNearestPathWalkableGrid(startGx, startGz, 3);
+    var startSnap = findNearestPathWalkableGrid(startGx, startGz, 3, fl);
     startGx = startSnap.x;
     startGz = startSnap.z;
-    var endSnap = findNearestPathWalkableGrid(endGx, endGz, 3);
+    var endSnap = findNearestPathWalkableGrid(endGx, endGz, 3, fl);
     endGx = endSnap.x;
     endGz = endSnap.z;
     if (!walkCheck(startGx, startGz) || !walkCheck(endGx, endGz)) return [];
@@ -2211,11 +3185,6 @@ function findPath(startGx, startGz, endGx, endGz, maxIterations) {
         for (var ni = 0; ni < neighbors.length; ni++) {
             var n = neighbors[ni];
             if (!walkCheck(n.x, n.z)) continue;
-            // Block diagonal moves that cut through a wall corner: both cardinal
-            // neighbors that share the corner must also be walkable. Without this
-            // the AI paths through a 1-cell gap between two diagonal wall blocks,
-            // gets stuck against the wall, and triggers the "HE'S CLOSE" warning
-            // through solid geometry.
             if (n.diag && (!walkCheck(n.c1x, n.c1z) || !walkCheck(n.c2x, n.c2z))) continue;
             var nKey = keyFn(n.x, n.z);
             if (closed.has(nKey)) continue;
@@ -2234,7 +3203,30 @@ function findPath(startGx, startGz, endGx, endGz, maxIterations) {
     return [];
 }
 
-function smartFindPath(kanyeX, kanyeZ, playerX, playerZ) {
+function isMultiFloorReachable(fromGx, fromGz, fromFloor, toGx, toGz, toFloor) {
+    var f0 = fromFloor || 0;
+    var f1 = toFloor || 0;
+    if (!hasSecondFloorActive() || f0 === f1) {
+        if (fromGx === toGx && fromGz === toGz) return true;
+        return findPath(fromGx, fromGz, toGx, toGz, 20000, f0).length > 0;
+    }
+    for (var i = 0; i < backroomsStairs.length; i++) {
+        var st = backroomsStairs[i];
+        var entry = f0 === 0 ? st.c0 : st.c3;
+        var exit  = f0 === 0 ? st.c3 : st.c0;
+        var pA = (fromGx === entry.x && fromGz === entry.z)
+            ? [entry]
+            : findPath(fromGx, fromGz, entry.x, entry.z, 18000, f0);
+        if (pA.length === 0) continue;
+        var pB = (exit.x === toGx && exit.z === toGz)
+            ? [exit]
+            : findPath(exit.x, exit.z, toGx, toGz, 18000, f1);
+        if (pB.length > 0) return true;
+    }
+    return false;
+}
+
+function smartFindPath(kanyeX, kanyeZ, playerX, playerZ, kanyeFloorOverride) {
     var dist = Math.hypot(kanyeX - playerX, kanyeZ - playerZ);
 
     if (isEndlessMode) {
@@ -2257,20 +3249,88 @@ function smartFindPath(kanyeX, kanyeZ, playerX, playerZ) {
         var pG = worldToGrid(playerX, playerZ);
 
         if (isForestMap()) {
-            // The Forest is fully open and obstacles are circular. Chase the player
-            // directly and let local avoidance weave around trees/props.
             return [];
         }
 
         var maxI = GRID_SIZE >= 40 ? 16000 : (GRID_SIZE > 30 ? 10000 : 6000);
+
+        if (hasSecondFloorActive() && backroomsStairs.length > 0) {
+            var pFloor = getPlayerFloor();
+            var kFloor = kanyeFloorOverride !== undefined
+                ? kanyeFloorOverride
+                : ((kanye.baseY || 0) >= SECOND_FLOOR_Y * 0.5 ? 1 : 0);
+
+            var botOnStair = getStairAt(kanyeX, kanyeZ);
+            var playerOnStair = getStairAt(playerX, playerZ);
+
+            // If both are inside the exact same stairwell, march directly along the ramp!
+            if (botOnStair && playerOnStair === botOnStair) {
+                return [];
+            }
+
+            // If nextbot is mid-stairwell, finish marching out the target landing without reversing!
+            if (botOnStair) {
+                if (pFloor === 1) {
+                    return [{ x: botOnStair.c2.x, z: botOnStair.c2.z }, { x: botOnStair.c3.x, z: botOnStair.c3.z }];
+                }
+                return [{ x: botOnStair.c1.x, z: botOnStair.c1.z }, { x: botOnStair.c0.x, z: botOnStair.c0.z }];
+            }
+
+            // If player is mid-stairwell, route to that stairwell's landing on kFloor and charge onto the ramp!
+            if (playerOnStair) {
+                var targetLanding = kFloor === 0 ? playerOnStair.c0 : playerOnStair.c3;
+                var rampNext = kFloor === 0
+                    ? [{ x: playerOnStair.c1.x, z: playerOnStair.c1.z }, { x: playerOnStair.c2.x, z: playerOnStair.c2.z }]
+                    : [{ x: playerOnStair.c2.x, z: playerOnStair.c2.z }, { x: playerOnStair.c1.x, z: playerOnStair.c1.z }];
+                var pToStair = (kG.x === targetLanding.x && kG.z === targetLanding.z)
+                    ? []
+                    : findPath(kG.x, kG.z, targetLanding.x, targetLanding.z, maxI, kFloor);
+                return pToStair.concat(rampNext);
+            }
+
+            // Cross-floor pursuit: pick shortest stairwell route (Manhattan lower bound + exact A* leg).
+            if (kFloor !== pFloor) {
+                var bestStair = null;
+                var bestScore = Infinity;
+                for (var si = 0; si < backroomsStairs.length; si++) {
+                    var st = backroomsStairs[si];
+                    var ent = kFloor === 0 ? st.c0 : st.c3;
+                    var ext = kFloor === 0 ? st.c3 : st.c0;
+                    var score = Math.abs(kG.x - ent.x) + Math.abs(kG.z - ent.z) +
+                                Math.abs(pG.x - ext.x) + Math.abs(pG.z - ext.z);
+                    if (score < bestScore) { bestScore = score; bestStair = st; }
+                }
+                if (bestStair) {
+                    var entryCell = kFloor === 0 ? bestStair.c0 : bestStair.c3;
+                    var rampSeq = kFloor === 0
+                        ? [{ x: bestStair.c1.x, z: bestStair.c1.z }, { x: bestStair.c2.x, z: bestStair.c2.z }, { x: bestStair.c3.x, z: bestStair.c3.z }]
+                        : [{ x: bestStair.c2.x, z: bestStair.c2.z }, { x: bestStair.c1.x, z: bestStair.c1.z }, { x: bestStair.c0.x, z: bestStair.c0.z }];
+                    var leg = (kG.x === entryCell.x && kG.z === entryCell.z)
+                        ? []
+                        : findPath(kG.x, kG.z, entryCell.x, entryCell.z, maxI, kFloor);
+                    return leg.concat(rampSeq);
+                }
+            }
+
+            // Same floor pursuit on active floor `kFloor`.
+            var hasMove2F = keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD;
+            var predX2 = playerX + (hasMove2F ? -Math.sin(player.yaw) * 3 : 0);
+            var predZ2 = playerZ + (hasMove2F ? -Math.cos(player.yaw) * 3 : 0);
+            var predG2 = worldToGrid(predX2, predZ2);
+            var samePath = (!isStairShaftCell(predG2.x, predG2.z))
+                ? findPath(kG.x, kG.z, predG2.x, predG2.z, maxI, kFloor)
+                : [];
+            if (samePath.length === 0) samePath = findPath(kG.x, kG.z, pG.x, pG.z, maxI, kFloor);
+            return samePath;
+        }
 
         var hasMovementInput = keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD;
         var predX = playerX + (hasMovementInput ? -Math.sin(player.yaw) * 3 : 0);
         var predZ = playerZ + (hasMovementInput ? -Math.cos(player.yaw) * 3 : 0);
         var predGrid = worldToGrid(predX, predZ);
 
-        var path = findPath(kG.x, kG.z, predGrid.x, predGrid.z, maxI);
-        if (path.length === 0) path = findPath(kG.x, kG.z, pG.x, pG.z, maxI);
+        var path = findPath(kG.x, kG.z, predGrid.x, predGrid.z, maxI, 0);
+        if (path.length === 0) path = findPath(kG.x, kG.z, pG.x, pG.z, maxI, 0);
         return path;
     }
 }
@@ -2310,7 +3370,7 @@ function createSpriteFromSkin(skinId, callback) {
     } else {
         var url = skinData.url || SKINS[0].url;
 
-        function finishSkinSprite(tex, fallbackUrl) {
+        function finishSkinSprite(tex) {
             tex.magFilter = THREE.NearestFilter;
             tex.minFilter = THREE.NearestFilter;
             var m = new THREE.SpriteMaterial({ map: tex });
@@ -2341,8 +3401,9 @@ function createKanye() {
         kanye.sprite = sprite;
         kanye.usesVideo = isVideo;
         kanye.usesCustomAudio = skinData && skinData.type === 'image_audio';
+        kanye.sprite.visible = !noBotMode;
         scene.add(kanye.sprite);
-        kanye.sprite.position.set(kanye.x, 1.25, kanye.z);
+        kanye.sprite.position.set(kanye.x, (kanye.baseY || 0) + 1.25, kanye.z);
     });
 }
 
@@ -2355,54 +3416,57 @@ function createPowerups(maxCount) {
     }
     powerups.length = 0;
 
-    // Dark Escape gets more powerups because the heavy fog makes them hard to find.
-    var limit = maxCount !== undefined ? maxCount : (isDarkEscapeMode ? 20 : 12);
+    var twoFloors = hasSecondFloorActive();
+    var limit = maxCount !== undefined ? maxCount : (isDarkEscapeMode ? (twoFloors ? 28 : 20) : (twoFloors ? 18 : 12));
 
     var cells;
     if (isEndlessMode) cells = getEndlessWalkableCellsNear(player.x, player.z, 30);
     else cells = walkableCells.slice();
 
-    // Fisher-Yates shuffle for unbiased distribution across the whole map.
     var shuffled = shuffle(cells);
     var urls = {
-        ice:     'https://joercat.github.io/ice.png',
-        speed:   'https://joercat.github.io/speed.png',
-        shield:  'https://joercat.github.io/shield.png',
-        battery: 'https://joercat.github.io/battery-pickup-removebg-preview.png'
+        ice:     'assets/ice.png',
+        speed:   'assets/speed.png',
+        shield:  'assets/shield.png',
+        battery: 'assets/battery-pickup-removebg-preview.png'
     };
-    // Dark Escape includes the battery pickup; other modes only use ice/speed/shield.
     var typePool = isDarkEscapeMode ? DARK_ESCAPE_POWERUP_TYPES : POWERUP_TYPES;
 
     var placedPositions = [];
     var count = 0;
 
-    // Use a proper Fisher-Yates shuffle to avoid left-wall clustering from biased sort.
     shuffle(shuffled);
 
     for (var i = 0; i < shuffled.length && count < limit; i++) {
         var cell = shuffled[i];
+        var fl = isEndlessMode ? 0 : (cell.floor || 0);
+        var baseY = getFloorBaseY(fl);
         var pos;
-        if (isEndlessMode) pos = { x: cell.wx, z: cell.wz };
-        else pos = gridToWorld(cell.x, cell.z);
+        if (isEndlessMode) pos = { x: cell.wx, z: cell.wz, floor: 0 };
+        else {
+            if (!isWalkableGrid(cell.x, cell.z, fl)) continue;
+            var wp = gridToWorld(cell.x, cell.z);
+            pos = { x: wp.x, z: wp.z, floor: fl };
+        }
 
         var tooClose = false;
         for (var p = 0; p < placedPositions.length; p++) {
-            if (Math.hypot(placedPositions[p].x - pos.x, placedPositions[p].z - pos.z) < MIN_POWERUP_SPACING) {
+            if (placedPositions[p].floor === fl &&
+                Math.hypot(placedPositions[p].x - pos.x, placedPositions[p].z - pos.z) < MIN_POWERUP_SPACING) {
                 tooClose = true; break;
             }
         }
         if (tooClose) continue;
 
-        // Cycle evenly through the type pool so each type appears the same number of times.
         var type = typePool[count % typePool.length];
         placedPositions.push(pos);
         count++;
 
         var sprite = new THREE.Sprite(getSpriteMaterial(urls[type], true));
         sprite.scale.set(1.2, 1.2, 1);
-        sprite.position.set(pos.x, 0.8, pos.z);
+        sprite.position.set(pos.x, baseY + 0.8, pos.z);
         scene.add(sprite);
-        powerups.push({ type: type, x: pos.x, z: pos.z, sprite: sprite, collected: false });
+        powerups.push({ type: type, x: pos.x, z: pos.z, baseY: baseY, floor: fl, sprite: sprite, collected: false });
     }
 }
 
@@ -2422,28 +3486,38 @@ function spawnCoins() {
     if (isEndlessMode) cells = getEndlessWalkableCellsNear(player.x, player.z, 25);
     else cells = walkableCells;
 
+    var targetCoins = hasSecondFloorActive() ? 8 : 5;
     var available = cells.filter(function (cell) {
-        var px, pz;
-        if (isEndlessMode) { px = cell.wx; pz = cell.wz; }
-        else { var p = gridToWorld(cell.x, cell.z); px = p.x; pz = p.z; }
-        return !coins.some(function (c) { return !c.collected && Math.hypot(c.x - px, c.z - pz) < 2; });
+        var px, pz, fl;
+        if (isEndlessMode) { px = cell.wx; pz = cell.wz; fl = 0; }
+        else {
+            fl = cell.floor || 0;
+            if (!isWalkableGrid(cell.x, cell.z, fl)) return false;
+            var p = gridToWorld(cell.x, cell.z);
+            px = p.x; pz = p.z;
+        }
+        return !coins.some(function (c) {
+            return !c.collected && (c.floor || 0) === fl && Math.hypot(c.x - px, c.z - pz) < 2;
+        });
     });
 
     var shuffled = shuffle(available.slice());
     var activeCoins = coins.filter(function (c) { return !c.collected; }).length;
-    var toSpawn = 5 - activeCoins;
+    var toSpawn = targetCoins - activeCoins;
 
     for (var i = 0; i < toSpawn && i < shuffled.length; i++) {
         var cell = shuffled[i];
+        var fl = isEndlessMode ? 0 : (cell.floor || 0);
+        var baseY = getFloorBaseY(fl);
         var pos;
         if (isEndlessMode) pos = { x: cell.wx, z: cell.wz };
         else pos = gridToWorld(cell.x, cell.z);
 
-        var coinSprite = new THREE.Sprite(getSpriteMaterial('https://joercat.github.io/coin.png', true));
+        var coinSprite = new THREE.Sprite(getSpriteMaterial('assets/coin.png', true));
         coinSprite.scale.set(0.8, 0.8, 1);
-        coinSprite.position.set(pos.x, 0.6, pos.z);
+        coinSprite.position.set(pos.x, baseY + 0.6, pos.z);
         scene.add(coinSprite);
-        coins.push({ x: pos.x, z: pos.z, sprite: coinSprite, collected: false });
+        coins.push({ x: pos.x, z: pos.z, baseY: baseY, floor: fl, sprite: coinSprite, collected: false });
     }
 }
 
@@ -2471,16 +3545,21 @@ function getEndlessWalkableCellsNear(wx, wz, radius) {
 function spawnEntities() {
     if (walkableCells.length < 10) return;
 
-    // Never spawn the player inside a tree/prop/decorative obstacle.
+    var desiredFloor = (hasSecondFloorActive() && testStartFloor === 1) ? 1 : 0;
     var spawnable = walkableCells.filter(function (c) {
-        return isWalkableGrid(c.x, c.z);
+        return (c.floor || 0) === desiredFloor && isWalkableGrid(c.x, c.z, c.floor || 0);
     });
+    if (spawnable.length < 1) {
+        spawnable = walkableCells.filter(function (c) { return isWalkableGrid(c.x, c.z, c.floor || 0); });
+    }
     if (spawnable.length < 1) spawnable = walkableCells.slice();
-    var pIdx = Math.floor(Math.random() * spawnable.length);
-    var pPos = gridToWorld(spawnable[pIdx].x, spawnable[pIdx].z);
+
+    var chosenPlayerCell = spawnable[Math.floor(Math.random() * spawnable.length)];
+    var pFloor = chosenPlayerCell.floor || 0;
+    var pPos = gridToWorld(chosenPlayerCell.x, chosenPlayerCell.z);
     player.x = pPos.x;
     player.z = pPos.z;
-    player.y = 1.6;
+    player.y = getFloorBaseY(pFloor) + 1.6;
     player.yaw = 0;
     player.pitch = 0;
     player.vy = 0;
@@ -2489,7 +3568,6 @@ function spawnEntities() {
     stamina = maxStamina;
     resetActiveEffects();
 
-    // Dark Escape does not offer a start shield.
     var shieldId;
     if (isDarkEscapeMode) shieldId = null;
     else if (isEscapeMode) shieldId = 'escape-shield-toggle';
@@ -2506,16 +3584,21 @@ function spawnEntities() {
         updateUI();
     }
 
-    var validSpawns = walkableCells.filter(function (c) {
-        if (!isWalkableGrid(c.x, c.z)) return false;
+    var validSpawns = shuffle(walkableCells.filter(function (c) {
+        var fl = c.floor || 0;
+        if (!isWalkableGrid(c.x, c.z, fl)) return false;
         var p = gridToWorld(c.x, c.z);
         return Math.hypot(p.x - player.x, p.z - player.z) > 20;
-    }).sort(function () { return Math.random() - 0.5; });
+    }));
 
     var kCell = validSpawns[0] || walkableCells[0];
+    var kFloor = kCell.floor || 0;
+    var kBaseY = getFloorBaseY(kFloor);
     var kPos = gridToWorld(kCell.x, kCell.z);
     kanye.x = kPos.x;
     kanye.z = kPos.z;
+    kanye.baseY = kBaseY;
+    kanye.y = kBaseY + 1.25;
     kanye.vx = 0;
     kanye.vz = 0;
     kanye.pathTimer = 0;
@@ -2526,11 +3609,15 @@ function spawnEntities() {
     kanye.frozenTimer = 0;
     kanye.halfSpeed = false;
     kanye.halfSpeedTimer = 0;
-    if (kanye.sprite) kanye.sprite.position.set(kanye.x, 1.25, kanye.z);
+    if (kanye.sprite) {
+        kanye.sprite.visible = !noBotMode;
+        kanye.sprite.position.set(kanye.x, kBaseY + 1.25, kanye.z);
+    }
 
     camera.position.set(player.x, player.y, player.z);
     createPowerups();
     createCoins();
+    updateTestBadgeUI();
 }
 
 // ==========================================
@@ -2665,31 +3752,28 @@ function updatePlayer(dt) {
     var rawSprintHeld = isSprinting || mobileSprintActive;
     var wantRaw = rawSprintHeld && hasInput;
     var regenRate = getStaminaRegenRate();
+    var hasInfStam = player.infiniteStamina || testInfiniteStamina;
 
-    // Once stamina runs dry, sprint is locked until it recovers to 15% AND the
-    // sprint input has been released/re-armed. Holding through the cooldown does
-    // not auto-reactivate in either hold or toggle mode.
-    if (player.infiniteStamina) {
+    if (hasInfStam) {
         sprintLocked = false;
         sprintNeedsRelease = false;
     }
-    if (!player.infiniteStamina && stamina <= 0) {
+    if (!hasInfStam && stamina <= 0) {
         sprintLocked = true;
         sprintNeedsRelease = true;
     }
-    if (!player.infiniteStamina && sprintLocked && !rawSprintHeld) {
-        // The player let go; from now on a fresh press is allowed to start sprint.
+    if (!hasInfStam && sprintLocked && !rawSprintHeld) {
         sprintNeedsRelease = false;
     }
-    if (sprintLocked && !player.infiniteStamina && !sprintNeedsRelease &&
+    if (sprintLocked && !hasInfStam && !sprintNeedsRelease &&
         stamina >= maxStamina * 0.15) {
         sprintLocked = false;
     }
     var wantSprint = wantRaw && !sprintLocked && !sprintNeedsRelease;
 
-    if (wantSprint && !player.infiniteStamina) {
+    if (wantSprint && !hasInfStam) {
         stamina = Math.max(0, stamina - dt * 20);
-        if (stamina <= 0 && !player.infiniteStamina) {
+        if (stamina <= 0 && !hasInfStam) {
             sprintLocked = true;
             sprintNeedsRelease = true;
         }
@@ -2697,13 +3781,13 @@ function updatePlayer(dt) {
         stamina = Math.min(maxStamina, stamina + dt * regenRate);
     }
 
-    var canSprint = wantSprint && (stamina > 0 || player.infiniteStamina) && !sprintLocked;
+    var canSprint = wantSprint && (stamina > 0 || hasInfStam) && !sprintLocked;
     var moveSpeed = canSprint ? sprintSpeed : walkSpeed;
 
     var stamBarEl = document.getElementById('stamina-bar');
     stamBarEl.style.width =
-        (player.infiniteStamina ? 100 : (stamina / maxStamina * 100)) + '%';
-    if (sprintLocked && !player.infiniteStamina) {
+        (hasInfStam ? 100 : (stamina / maxStamina * 100)) + '%';
+    if (sprintLocked && !hasInfStam) {
         stamBarEl.classList.add('exhausted');
     } else {
         stamBarEl.classList.remove('exhausted');
@@ -2731,8 +3815,6 @@ function updatePlayer(dt) {
         moveZ = (moveZ / len) * moveSpeed;
     }
 
-    // Sprint FOV only kicks in while the player is actually sprinting. It turns
-    // off while locked/exhausted, even if the sprint key is still held.
     var sprintFovActive = canSprint && len > 0;
     var targetFov = (saveData.settings.fov || 75) + (sprintFovActive ? 6 : 0);
     if (Math.abs(camera.fov - targetFov) > 0.01) {
@@ -2741,14 +3823,18 @@ function updatePlayer(dt) {
         camera.updateProjectionMatrix();
     }
 
+    var wasGrounded = player.onGround;
+    var jumpedThisFrame = false;
     if ((keys.Space || mobileJumpPressed) && player.onGround) {
         player.vy = 6.0;
         player.onGround = false;
         mobileJumpPressed = false;
+        jumpedThisFrame = true;
     }
 
     player.vy -= 18 * dt;
 
+    var prevFootY = player.y - 1.6;
     var newX = player.x + moveX * dt;
     var newZ = player.z + moveZ * dt;
     var newY = player.y + player.vy * dt;
@@ -2759,15 +3845,19 @@ function updatePlayer(dt) {
     player.x = newX;
     player.z = newZ;
 
+    var groundY = getGroundSurfaceAt(player.x, player.z, prevFootY);
+    var groundEyeY = groundY + 1.6;
+
     var activeDecors = isEndlessMode ? endlessDecorations : decorations;
     var onDecor = false;
-    var decorTopY = 0;
+    var decorTopY = groundY;
 
     for (var di = 0; di < activeDecors.length; di++) {
         var dec = activeDecors[di];
+        var dBase = dec.baseY || 0;
+        if (Math.abs(dBase - groundY) > 1.0) continue;
         if (Math.hypot(player.x - dec.x, player.z - dec.z) < dec.radius + 0.3 && dec.height) {
-            var top = dec.height + 0.1;
-            // Only land on top if falling AND high enough that only a jump gets you there.
+            var top = dBase + dec.height + 0.1;
             if (player.vy <= 0 && newY <= top + 1.6 && newY > top + 1.3) {
                 decorTopY = top;
                 onDecor = true;
@@ -2780,24 +3870,47 @@ function updatePlayer(dt) {
         newY = decorTopY + 1.6;
         player.vy = 0;
         player.onGround = true;
-    } else if (newY < 1.6) {
-        newY = 1.6;
+    } else if (newY <= groundEyeY || (wasGrounded && !jumpedThisFrame && newY - groundEyeY < 0.45)) {
+        newY = groundEyeY;
         player.vy = 0;
         player.onGround = true;
     }
-    if (newY > WALL_H - 0.3) { newY = WALL_H - 0.3; player.vy = 0; }
+
+    var onStairNow = getStairAt(player.x, player.z);
+    var ceilLimit = (hasSecondFloorActive() && (onStairNow || groundY >= SECOND_FLOOR_Y * 0.5))
+        ? (SECOND_FLOOR_Y + SECOND_WALL_H - 0.3)
+        : (WALL_H - 0.3);
+    if (newY > ceilLimit) { newY = ceilLimit; player.vy = 0; }
 
     player.y = newY;
+
+    // Smoothly blend atmosphere between Level 0 ("The Lobby") & Level 1 ("Habitable Zone")
+    if (hasSecondFloorActive() && !isDarkEscapeMode && scene && scene.fog) {
+        var curMats = getMapMats();
+        if (curMats.fogColor !== undefined && curMats.upperFogColor !== undefined) {
+            var blendT = Math.max(0, Math.min(1, (player.y - 1.6) / SECOND_FLOOR_Y));
+            var r0 = (curMats.fogColor >> 16) & 255, g0 = (curMats.fogColor >> 8) & 255, b0 = curMats.fogColor & 255;
+            var r1 = (curMats.upperFogColor >> 16) & 255, g1 = (curMats.upperFogColor >> 8) & 255, b1 = curMats.upperFogColor & 255;
+            var rr = Math.round(r0 + (r1 - r0) * blendT);
+            var gg = Math.round(g0 + (g1 - g0) * blendT);
+            var bb = Math.round(b0 + (b1 - b0) * blendT);
+            var blendedHex = (rr << 16) | (gg << 8) | bb;
+            scene.fog.color.setHex(blendedHex);
+            scene.background.setHex(blendedHex);
+        }
+    }
 
     camera.position.set(player.x, player.y, player.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
 
+    var playerFootNow = player.y - 1.6;
     for (var pi = 0; pi < powerups.length; pi++) {
         var pu = powerups[pi];
-        if (!pu.collected && Math.hypot(pu.x - player.x, pu.z - player.z) < 1.5) {
-            // Never consume a shield power-up while a shield is already active.
+        if (!pu.collected &&
+            Math.abs((pu.baseY || 0) - playerFootNow) < 1.8 &&
+            Math.hypot(pu.x - player.x, pu.z - player.z) < 1.5) {
             if (pu.type === 'shield' && player.shieldHits > 0) {
                 var now = Date.now();
                 if (!pu.lastWarn || now - pu.lastWarn > 1300) {
@@ -2809,19 +3922,19 @@ function updatePlayer(dt) {
             pu.collected = true;
             if (pu.sprite) scene.remove(pu.sprite);
             activatePowerup(pu.type);
-            // Dark Escape keeps powerups respawning for the whole round.
             if (isDarkEscapeMode) {
                 pu.respawnAt = Date.now() + 9000 + Math.random() * 7000;
             }
         }
     }
 
-    // Hard and Extreme Dark Escape pay 2 coins per pickup.
     var coinValue = (isDarkEscapeMode && (isDarkEscapeHard || isDarkEscapeExtreme)) ? 2 : (isChaosMode ? 2 : 1);
     var needRespawn = false;
     for (var ci = 0; ci < coins.length; ci++) {
         var coin = coins[ci];
-        if (!coin.collected && Math.hypot(coin.x - player.x, coin.z - player.z) < 1.5) {
+        if (!coin.collected &&
+            Math.abs((coin.baseY || 0) - playerFootNow) < 1.8 &&
+            Math.hypot(coin.x - player.x, coin.z - player.z) < 1.5) {
             coin.collected = true;
             if (coin.sprite) scene.remove(coin.sprite);
             sessionCoins += coinValue;
@@ -2848,42 +3961,55 @@ function updatePlayer(dt) {
 // SHARED NEXTBOT UPDATE LOGIC
 // ==========================================
 function unstickNextbot(nb) {
+    var nbFloor = hasSecondFloorActive() && (nb.baseY || 0) >= SECOND_FLOOR_Y * 0.5 ? 1 : 0;
     var candidates;
     if (isEndlessMode) candidates = getEndlessWalkableCellsNear(nb.x, nb.z, 14);
     else candidates = walkableCells;
 
     var bestDist = Infinity;
     var bestPos = null;
+    var bestFloor = nbFloor;
     for (var i = 0; i < candidates.length; i++) {
+        var cFl = isEndlessMode ? 0 : (candidates[i].floor || 0);
+        if (!isEndlessMode && cFl !== nbFloor) continue;
         var p;
         if (isEndlessMode) p = { x: candidates[i].wx, z: candidates[i].wz };
         else p = gridToWorld(candidates[i].x, candidates[i].z);
-        if (!isWalkableWorld(p.x, p.z, 0.35)) continue;
+        var bY = getFloorBaseY(cFl);
+        if (!isWalkableWorld(p.x, p.z, 0.35, undefined, bY)) continue;
         var d = Math.hypot(p.x - nb.x, p.z - nb.z);
         if (d < bestDist) {
             bestDist = d;
             bestPos = p;
+            bestFloor = cFl;
         }
     }
     if (bestPos) {
         nb.x = bestPos.x;
         nb.z = bestPos.z;
+        nb.baseY = getFloorBaseY(bestFloor);
+        nb.y = nb.baseY + 1.25;
         nb.vx = 0;
         nb.vz = 0;
         nb.pathTimer = 0;
         nb.path = [];
         nb.pathIndex = 0;
-        if (nb.sprite) nb.sprite.position.set(nb.x, 1.25, nb.z);
+        if (nb.sprite) nb.sprite.position.set(nb.x, nb.baseY + 1.25, nb.z);
     }
 }
 
 function updateSingleNextbot(nb, dt) {
     if (!nb.sprite || isPaused || !pageVisible) return undefined;
     if (!nb.stuckTimer) nb.stuckTimer = 0;
+    if (nb.baseY === undefined) nb.baseY = 0;
 
-    // If the nextbot somehow got pushed inside/clipped into a wall or prop, pop
-    // it back to the nearest safe grid before it can wiggle in place forever.
-    if (!isWalkableWorld(nb.x, nb.z, 0.4)) {
+    if (noBotMode) {
+        nb.sprite.visible = false;
+        return Infinity;
+    }
+    nb.sprite.visible = true;
+
+    if (!isWalkableWorld(nb.x, nb.z, 0.4, undefined, nb.baseY)) {
         unstickNextbot(nb);
         return Math.hypot(nb.x - player.x, nb.z - player.z);
     }
@@ -2914,15 +4040,14 @@ function updateSingleNextbot(nb, dt) {
     }
 
     var extremeSpeed = isDarkEscapeMode && isDarkEscapeExtreme;
-    // Extreme is still clearly faster than the normal chaser (7.5), but a little
-    // slower than the previous 11 so it is escapable while still threatening.
     var baseSpeed = extremeSpeed ? 10.2 : 7.5;
     var maxSpeed = nb.halfSpeed ? baseSpeed * 0.6 : baseSpeed;
+    var nbFloor = hasSecondFloorActive() && nb.baseY >= SECOND_FLOOR_Y * 0.5 ? 1 : 0;
 
     nb.pathTimer -= dt;
     if (nb.pathTimer <= 0) {
         nb.pathTimer = extremeSpeed ? 0.22 : (isForestMap() ? 0.35 : 0.3);
-        nb.path = smartFindPath(nb.x, nb.z, player.x, player.z);
+        nb.path = smartFindPath(nb.x, nb.z, player.x, player.z, nbFloor);
         nb.pathIndex = 0;
     }
 
@@ -2960,23 +4085,25 @@ function updateSingleNextbot(nb, dt) {
         }
     }
 
-    // Slip around small circular obstacles (trees, logs, rocks) instead of treating
-    // the entire grid cell they sit on as if it were a solid wall.
-    var decs = isEndlessMode ? endlessDecorations : decorations;
-    for (var di = 0; di < decs.length; di++) {
-        var dec = decs[di];
-        var dxD = nb.x - dec.x;
-        var dzD = nb.z - dec.z;
-        var dd = Math.hypot(dxD, dzD);
-        var avoidR = dec.radius + 0.85;
-        if (dd < avoidR && dd > 0.001) {
-            var perpX = -dzD / dd;
-            var perpZ = dxD / dd;
-            var dot = nb.vx * perpX + nb.vz * perpZ;
-            if (dot < 0) { perpX = -perpX; perpZ = -perpZ; }
-            var push = (avoidR - dd) * 8;
-            nb.vx += perpX * push;
-            nb.vz += perpZ * push;
+    var onStairBot = getStairAt(nb.x, nb.z);
+    if (!onStairBot) {
+        var decs = isEndlessMode ? endlessDecorations : decorations;
+        for (var di = 0; di < decs.length; di++) {
+            var dec = decs[di];
+            if (!isEndlessMode && (dec.floor || 0) !== nbFloor) continue;
+            var dxD = nb.x - dec.x;
+            var dzD = nb.z - dec.z;
+            var dd = Math.hypot(dxD, dzD);
+            var avoidR = dec.radius + 0.85;
+            if (dd < avoidR && dd > 0.001) {
+                var perpX = -dzD / dd;
+                var perpZ = dxD / dd;
+                var dot = nb.vx * perpX + nb.vz * perpZ;
+                if (dot < 0) { perpX = -perpX; perpZ = -perpZ; }
+                var push = (avoidR - dd) * 8;
+                nb.vx += perpX * push;
+                nb.vz += perpZ * push;
+            }
         }
     }
     var sp2 = Math.hypot(nb.vx, nb.vz);
@@ -2985,11 +4112,12 @@ function updateSingleNextbot(nb, dt) {
         nb.vz = (nb.vz / sp2) * maxSpeed;
     }
 
+    var prevNbFootY = nb.baseY;
     var newX = nb.x + nb.vx * dt;
     var newZ = nb.z + nb.vz * dt;
 
-    if (!isWalkableWorld(newX, nb.z, 0.4)) { newX = nb.x; nb.vx *= -0.5; }
-    if (!isWalkableWorld(nb.x, newZ, 0.4)) { newZ = nb.z; nb.vz *= -0.5; }
+    if (!isWalkableWorld(newX, nb.z, 0.4, undefined, prevNbFootY)) { newX = nb.x; nb.vx *= -0.5; }
+    if (!isWalkableWorld(nb.x, newZ, 0.4, undefined, prevNbFootY)) { newZ = nb.z; nb.vz *= -0.5; }
 
     var movement = Math.hypot(newX - nb.x, newZ - nb.z);
     if (movement < 0.01 * dt && Math.hypot(nb.vx, nb.vz) > 0.1) {
@@ -3008,7 +4136,9 @@ function updateSingleNextbot(nb, dt) {
 
     nb.x = newX;
     nb.z = newZ;
-    nb.sprite.position.set(nb.x, 1.25, nb.z);
+    nb.baseY = getGroundSurfaceAt(nb.x, nb.z, prevNbFootY);
+    nb.y = nb.baseY + 1.25;
+    nb.sprite.position.set(nb.x, nb.baseY + 1.25, nb.z);
 
     return Math.hypot(nb.x - player.x, nb.z - player.z);
 }
@@ -3033,20 +4163,20 @@ function handleNextbotCatch(nb) {
         if (player.shieldHits <= 0) {
             document.getElementById('shield-indicator').style.opacity = '0';
             document.getElementById('slot-shield').classList.remove('active');
-            // Shield Stack Lv3: grant a 5-second speed boost when the shield fully breaks.
             if (saveData.upgrades.shieldStack >= 3) {
                 player.shieldSpeedBoost = true;
                 player.shieldSpeedBoostTimer = 5;
             }
         }
 
+        var nbFl = hasSecondFloorActive() && (nb.baseY || 0) >= SECOND_FLOOR_Y * 0.5 ? 1 : 0;
         var bounceDir = Math.atan2(nb.z - player.z, nb.x - player.x);
         nb.x += Math.cos(bounceDir) * 8;
         nb.z += Math.sin(bounceDir) * 8;
         nb.vx = Math.cos(bounceDir) * 10;
         nb.vz = Math.sin(bounceDir) * 10;
 
-        if (!isWalkableWorld(nb.x, nb.z, 0.4)) {
+        if (!isWalkableWorld(nb.x, nb.z, 0.4, undefined, nb.baseY || 0)) {
             var nearCells;
             if (isEndlessMode) nearCells = getEndlessWalkableCellsNear(nb.x, nb.z, 10);
             else nearCells = walkableCells;
@@ -3054,13 +4184,19 @@ function handleNextbotCatch(nb) {
             var bestDist = Infinity;
             var bestPos = null;
             for (var ci = 0; ci < nearCells.length; ci++) {
+                if (!isEndlessMode && (nearCells[ci].floor || 0) !== nbFl) continue;
                 var wp;
                 if (isEndlessMode) wp = { x: nearCells[ci].wx, z: nearCells[ci].wz };
                 else wp = gridToWorld(nearCells[ci].x, nearCells[ci].z);
                 var dd = Math.hypot(wp.x - nb.x, wp.z - nb.z);
                 if (dd < bestDist) { bestDist = dd; bestPos = wp; }
             }
-            if (bestPos) { nb.x = bestPos.x; nb.z = bestPos.z; }
+            if (bestPos) {
+                nb.x = bestPos.x;
+                nb.z = bestPos.z;
+                nb.baseY = getFloorBaseY(nbFl);
+                nb.y = nb.baseY + 1.25;
+            }
         }
 
         nb.pathTimer = 0;
@@ -3079,7 +4215,9 @@ function handleNextbotCatch(nb) {
     return true;
 }
 
-function hasClearLineOfSight(x0, z0, x1, z1) {
+function hasClearLineOfSight(x0, z0, x1, z1, baseY) {
+    var fl = (hasSecondFloorActive() && (baseY || 0) >= SECOND_FLOOR_Y * 0.5) ? 1 : 0;
+    var flMaze = getMazeForFloor(fl);
     var dist = Math.hypot(x1 - x0, z1 - z0);
     var steps = Math.max(2, Math.ceil(dist / 0.45));
     for (var i = 1; i < steps; i++) {
@@ -3091,7 +4229,7 @@ function hasClearLineOfSight(x0, z0, x1, z1) {
         } else {
             var g = worldToGrid(px, pz);
             if (g.x < 0 || g.x >= GRID_SIZE || g.z < 0 || g.z >= GRID_SIZE) return false;
-            if (!maze[g.x] || maze[g.x][g.z] !== 0) return false;
+            if (!flMaze[g.x] || flMaze[g.x][g.z] !== 0) return false;
         }
     }
     return true;
@@ -3102,19 +4240,34 @@ function hasClearLineOfSight(x0, z0, x1, z1) {
 // ==========================================
 function updateKanye(dt) {
     if (isDarkEscapeMode && darkEscapeWon) return;
+    if (noBotMode) {
+        if (kanye.sprite) kanye.sprite.visible = false;
+        setAudioVolume(0);
+        var fearOff = document.getElementById('fear-overlay');
+        var warnOff = document.getElementById('warning');
+        if (fearOff) fearOff.style.opacity = '0';
+        if (warnOff) warnOff.style.opacity = '0';
+        return;
+    }
+
     var distToPlayer = updateSingleNextbot(kanye, dt);
     if (distToPlayer === undefined) return;
 
+    var playerFoot = player.y - 1.6;
+    var kanyeFoot = kanye.baseY || 0;
+    var sameFloor = !hasSecondFloorActive() || Math.abs(playerFoot - kanyeFoot) < 1.8;
+
     var audioRange = 90;
     var vol = distToPlayer < audioRange ? Math.pow(1 - (distToPlayer / audioRange), 0.35) : 0;
+    if (!sameFloor) vol *= 0.42;
     setAudioVolume(vol);
 
     var fear = document.getElementById('fear-overlay');
     var warn = document.getElementById('warning');
-    var lineOfSight = hasClearLineOfSight(kanye.x, kanye.z, player.x, player.z);
-    updateCloseDanger(fear, warn, distToPlayer, lineOfSight);
+    var lineOfSight = sameFloor && hasClearLineOfSight(kanye.x, kanye.z, player.x, player.z, kanyeFoot);
+    updateCloseDanger(fear, warn, sameFloor ? distToPlayer : 999, lineOfSight);
 
-    if (distToPlayer < 1.2) {
+    if (sameFloor && distToPlayer < 1.2) {
         if (handleNextbotCatch(kanye)) killPlayer();
     }
 }
@@ -3130,12 +4283,9 @@ function updateCloseDanger(fear, warn, dist, hasLine) {
     }
 
     var t = Math.max(0, Math.min(1, 1 - dist / 20));
-    // Red vignette: smoothly brighter the nearer the chaser gets.
     fear.style.opacity = String(Math.pow(t, 0.9) * 0.65);
 
-    // The "HE'S CLOSE" message starts as a faint red far away and becomes bright
-    // as he gets close, then turns a little deeper at point-blank range.
-    var warnT = Math.max(0, Math.min(1, (t - 0.30) / 0.40)); // fades in from ~14u
+    var warnT = Math.max(0, Math.min(1, (t - 0.30) / 0.40));
     warn.style.opacity = String(warnT);
 
     if (dist < 3.5) {
@@ -3150,29 +4300,67 @@ function updateCloseDanger(fear, warn, dist, hasLine) {
 }
 
 // ==========================================
-// MINIMAP
+// MINIMAP & FLOOR LABEL HUD
 // ==========================================
+function getCurrentFloorLabelText() {
+    if (hasSecondFloorActive()) {
+        return getPlayerFloor() === 1
+            ? '🏭 Backrooms · Level 1 (2F)'
+            : '🏢 Backrooms · Level 0 (1F)';
+    }
+    var mapNames = {
+        backrooms: '🏢 Backrooms',
+        hospital: '🏥 Hospital',
+        forest: '🌳 Forest'
+    };
+    return mapNames[currentMap] || '';
+}
+
+function updateFloorLabelHUD() {
+    var floorEl = document.getElementById('minimap-floor');
+    if (!floorEl) return;
+    if (floorEl.style.display !== 'none') {
+        floorEl.textContent = getCurrentFloorLabelText();
+    }
+}
+
 function updateMinimap() {
+    updateFloorLabelHUD();
     if (isDarkEscapeMode || isEscapeMode || isEndlessMode || isChaosMode) return;
 
     var canvas = document.getElementById('minimap-canvas');
     var ctx = canvas.getContext('2d');
     var w = canvas.width, h = canvas.height;
     var scale = w / GRID_SIZE;
+    var pFloor = getPlayerFloor();
+    var activeMaze = getMazeForFloor(pFloor);
 
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, w, h);
 
-    ctx.fillStyle = '#444';
+    ctx.fillStyle = pFloor === 1 ? '#4d5563' : '#4a4536';
     for (var x = 0; x < GRID_SIZE; x++) {
         for (var z = 0; z < GRID_SIZE; z++) {
-            if (maze[x] && maze[x][z] === 1) ctx.fillRect(x * scale, z * scale, scale, scale);
+            if (activeMaze[x] && activeMaze[x][z] === 1) ctx.fillRect(x * scale, z * scale, scale, scale);
+        }
+    }
+
+    // Highlight stairwell shafts & landings on multi-floor Backrooms!
+    if (hasSecondFloorActive()) {
+        for (var si = 0; si < backroomsStairs.length; si++) {
+            var st = backroomsStairs[si];
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillRect(st.c1.x * scale, st.c1.z * scale, scale, scale);
+            ctx.fillRect(st.c2.x * scale, st.c2.z * scale, scale, scale);
+            var land = pFloor === 1 ? st.c3 : st.c0;
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
+            ctx.fillRect(land.x * scale, land.z * scale, scale, scale);
         }
     }
 
     for (var pi = 0; pi < powerups.length; pi++) {
         var pu = powerups[pi];
-        if (pu.collected) continue;
+        if (pu.collected || (pu.floor || 0) !== pFloor) continue;
         var px = (pu.x / CELL + GRID_SIZE / 2) * scale;
         var pz = (pu.z / CELL + GRID_SIZE / 2) * scale;
         ctx.fillStyle = pu.type === 'ice' ? '#88ccff' : pu.type === 'speed' ? '#ffcc00' : '#44ff44';
@@ -3183,7 +4371,7 @@ function updateMinimap() {
 
     for (var ci = 0; ci < coins.length; ci++) {
         var co = coins[ci];
-        if (co.collected) continue;
+        if (co.collected || (co.floor || 0) !== pFloor) continue;
         var cx = (co.x / CELL + GRID_SIZE / 2) * scale;
         var cz = (co.z / CELL + GRID_SIZE / 2) * scale;
         ctx.fillStyle = '#ffd700';
@@ -3206,19 +4394,23 @@ function updateMinimap() {
     ctx.lineTo(playerMapX - Math.sin(player.yaw) * 14, playerMapZ - Math.cos(player.yaw) * 14);
     ctx.stroke();
 
-    var kanyeMapX = (kanye.x / CELL + GRID_SIZE / 2) * scale;
-    var kanyeMapZ = (kanye.z / CELL + GRID_SIZE / 2) * scale;
-    ctx.fillStyle = kanye.frozen ? '#88ccff' : '#f44';
-    ctx.beginPath();
-    ctx.arc(kanyeMapX, kanyeMapZ, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    var mapNames = {
-        backrooms: '🏢 Backrooms',
-        hospital: '🏥 Hospital',
-        forest: '🌳 Forest'
-    };
-    document.getElementById('minimap-floor').textContent = mapNames[currentMap] || '';
+    if (!noBotMode) {
+        var kFloor = hasSecondFloorActive() && (kanye.baseY || 0) >= SECOND_FLOOR_Y * 0.5 ? 1 : 0;
+        var kanyeMapX = (kanye.x / CELL + GRID_SIZE / 2) * scale;
+        var kanyeMapZ = (kanye.z / CELL + GRID_SIZE / 2) * scale;
+        if (kFloor === pFloor) {
+            ctx.fillStyle = kanye.frozen ? '#88ccff' : '#f44';
+            ctx.beginPath();
+            ctx.arc(kanyeMapX, kanyeMapZ, 5, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.strokeStyle = kanye.frozen ? 'rgba(136,204,255,0.65)' : 'rgba(255,80,80,0.65)';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.arc(kanyeMapX, kanyeMapZ, 4.5, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
 }
 
 // ==========================================
@@ -3247,13 +4439,13 @@ function killPlayer() {
     var mins = Math.floor(elapsed / 60);
     var secs = Math.floor(elapsed % 60);
 
-    if (!isDarkEscapeMode && !isEndlessMode && !isChaosMode) {
+    if (!sessionUsedTestMode && !isDarkEscapeMode && !isEndlessMode && !isChaosMode) {
         saveData.highscores.push(elapsed);
         saveData.highscores.sort(function (a, b) { return b - a; });
         saveData.highscores = saveData.highscores.slice(0, 3);
     }
 
-    if (isChaosMode && elapsed > (saveData.chaosRecord || 0)) saveData.chaosRecord = elapsed;
+    if (!sessionUsedTestMode && isChaosMode && elapsed > (saveData.chaosRecord || 0)) saveData.chaosRecord = elapsed;
 
     saveData.coins += sessionCoins;
     saveSaveData();
@@ -3334,11 +4526,16 @@ function returnToMenu() {
     document.getElementById('endless-hud').style.display = 'none';
     document.getElementById('chaos-hud').style.display = 'none';
 
+    var floorEl = document.getElementById('minimap-floor');
+    if (floorEl) floorEl.classList.remove('standalone');
     if (saveData.settings.minimapEnabled !== false) {
         document.getElementById('minimap').style.display = 'block';
-        document.getElementById('minimap-floor').style.display = 'block';
+        if (floorEl) floorEl.style.display = 'block';
+    } else if (floorEl) {
+        floorEl.style.display = 'none';
     }
 
+    updateTestBadgeUI();
     clearScene();
     chaosNextbots = [];
     endlessChunks.clear();
@@ -3363,19 +4560,17 @@ function getDoorMaterials() {
     return { frame: SHARED_MATS.doorFrame, door: SHARED_MATS.doorPanel, knob: SHARED_MATS.doorKnob };
 }
 
-function createDoorMesh(worldX, worldZ, direction, glowColor, atFace) {
+function createDoorMesh(worldX, worldZ, direction, glowColor, atFace, baseY) {
     var doorGroup = new THREE.Group();
     var doorM = getDoorMaterials();
     var frameMat = doorM.frame;
     var doorMat = doorM.door;
     var knobMat = doorM.knob;
-    // Dark Escape: keep the door brown/wooden — only the light and glow sprite
-    // use the accent colour so it stays visible without looking wrong.
+    var yOffset = baseY || 0;
 
     var doorX = worldX, doorZ = worldZ, rotY = 0;
 
     if (atFace) {
-        // worldX/Z is already the wall-face midpoint — only set rotation.
         if (direction === 'east' || direction === 'west') rotY = Math.PI / 2;
     } else {
         if (direction === 'east') { doorX = worldX - CELL / 2 + 0.3; rotY = Math.PI / 2; }
@@ -3412,7 +4607,6 @@ function createDoorMesh(worldX, worldZ, direction, glowColor, atFace) {
     glow.position.set(0, 1.5, 0.6);
     doorGroup.add(glow);
 
-    // Soft glow marker makes the Dark Escape door visible in the dark.
     if (glowColor !== undefined && glowColor !== null) {
         var doorGlowMat = new THREE.SpriteMaterial({
             color: glowColor,
@@ -3426,7 +4620,7 @@ function createDoorMesh(worldX, worldZ, direction, glowColor, atFace) {
         doorGroup.add(doorGlow);
     }
 
-    doorGroup.position.set(doorX, 0, doorZ);
+    doorGroup.position.set(doorX, yOffset, doorZ);
     doorGroup.rotation.y = rotY;
 
     return doorGroup;
@@ -3483,7 +4677,6 @@ function init() {
                 return;
             }
             if (e.repeat) return;
-            // Reserved: never allow rebinding these core keys.
             if (e.code === 'Escape' || e.code === 'Space' || e.code === 'Enter') {
                 showPickupMessage('⚠️ That key is reserved!', 1500);
                 return;
@@ -3491,6 +4684,29 @@ function init() {
             finishKeyCapture(e.code);
             return;
         }
+
+        // Secret "olive" key sequence opens/closes the Developer & No-Bot Test Menu!
+        if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && e.key && e.key.length === 1) {
+            var activeTag = document.activeElement && document.activeElement.tagName;
+            if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
+                secretKeyBuffer = (secretKeyBuffer + e.key.toLowerCase()).slice(-8);
+                if (secretKeyBuffer.slice(-5) === 'olive') {
+                    secretKeyBuffer = '';
+                    e.preventDefault();
+                    toggleSecretTestMenu();
+                    return;
+                }
+            }
+        }
+
+        if (secretModalOpen) {
+            if (e.code === 'Escape') {
+                e.preventDefault();
+                closeSecretTestMenu();
+            }
+            return;
+        }
+
         keys[e.code] = true;
         if (e.code === sprintKeyCode) {
             if (saveData.settings.sprintMode === 'toggle') {
@@ -3746,50 +4962,70 @@ function restartGame() {
         GRID_SIZE = getMapSize();
         document.getElementById('chaos-hud').style.display = 'block';
         document.getElementById('minimap').style.display = 'none';
-        document.getElementById('minimap-floor').style.display = 'none';
+        var chFloorEl = document.getElementById('minimap-floor');
+        if (chFloorEl) {
+            if (currentMap === 'backrooms' && isBackroomsSecondFloorEnabled()) {
+                chFloorEl.classList.add('standalone');
+                chFloorEl.style.display = 'block';
+            } else {
+                chFloorEl.classList.remove('standalone');
+                chFloorEl.style.display = 'none';
+            }
+        }
 
         generateMaze();
         buildWorld();
+        rebuildPathGrid();
         if (walkableCells.length < 10) return;
 
-        var pIdx = Math.floor(Math.random() * walkableCells.length);
-        var pPos = gridToWorld(walkableCells[pIdx].x, walkableCells[pIdx].z);
-        player.x = pPos.x; player.z = pPos.z; player.y = 1.6;
+        var wantFl = (hasSecondFloorActive() && testStartFloor === 1) ? 1 : 0;
+        var pPool = walkableCells.filter(function (c) {
+            return (c.floor || 0) === wantFl && isWalkableGrid(c.x, c.z, c.floor || 0);
+        });
+        if (pPool.length < 1) pPool = walkableCells.slice();
+        var pCell = pPool[Math.floor(Math.random() * pPool.length)];
+        var pPos = gridToWorld(pCell.x, pCell.z);
+        player.x = pPos.x; player.z = pPos.z; player.y = getFloorBaseY(pCell.floor || 0) + 1.6;
         player.yaw = 0; player.pitch = 0; player.vy = 0; player.onGround = true;
         resetActiveEffects();
 
         var skins = pickChaosSkins();
-        var usedPositions = [{ x: player.x, z: player.z }];
+        var usedPositions = [{ x: player.x, z: player.z, floor: pCell.floor || 0 }];
 
         for (var i = 0; i < 3; i++) {
             var nb = {
-                x: 0, z: 0, y: 1.25, vx: 0, vz: 0, sprite: null,
+                x: 0, z: 0, y: 1.25, baseY: 0, vx: 0, vz: 0, sprite: null,
                 pathTimer: Math.random() * 0.3, path: [], pathIndex: 0,
                 frozen: false, frozenTimer: 0, halfSpeed: false, halfSpeedTimer: 0,
                 usesVideo: false, usesCustomAudio: false, skinId: skins[i], stuckTimer: 0
             };
 
-            var validSpawns = walkableCells.filter(function (c) {
+            var validSpawns = shuffle(walkableCells.filter(function (c) {
+                var fl = c.floor || 0;
+                if (!isWalkableGrid(c.x, c.z, fl)) return false;
                 var p = gridToWorld(c.x, c.z);
-                var farEnough = true;
                 for (var ui = 0; ui < usedPositions.length; ui++) {
-                    if (Math.hypot(p.x - usedPositions[ui].x, p.z - usedPositions[ui].z) < 15) { farEnough = false; break; }
+                    if (Math.hypot(p.x - usedPositions[ui].x, p.z - usedPositions[ui].z) < 15) return false;
                 }
-                return farEnough;
-            }).sort(function () { return Math.random() - 0.5; });
+                return true;
+            }));
 
             var kCell = validSpawns[0] || walkableCells[Math.floor(Math.random() * walkableCells.length)];
             var kPos = gridToWorld(kCell.x, kCell.z);
+            var kFl = kCell.floor || 0;
             nb.x = kPos.x; nb.z = kPos.z;
-            usedPositions.push({ x: nb.x, z: nb.z });
+            nb.baseY = getFloorBaseY(kFl);
+            nb.y = nb.baseY + 1.25;
+            usedPositions.push({ x: nb.x, z: nb.z, floor: kFl });
             chaosNextbots.push(nb);
 
             (function (nbRef, skinId) {
                 createSpriteFromSkin(skinId, function (sprite, isVideo) {
                     nbRef.sprite = sprite;
                     nbRef.usesVideo = isVideo;
+                    nbRef.sprite.visible = !noBotMode;
                     scene.add(nbRef.sprite);
-                    nbRef.sprite.position.set(nbRef.x, 1.25, nbRef.z);
+                    nbRef.sprite.position.set(nbRef.x, nbRef.baseY + 1.25, nbRef.z);
                 });
             })(nb, skins[i]);
         }
@@ -3798,7 +5034,7 @@ function restartGame() {
             var s = SKINS.find(function (x) { return x.id === id; });
             return s ? s.name : id;
         });
-        document.getElementById('chaos-chasers').textContent = skinNames.join(' | ');
+        document.getElementById('chaos-chasers').textContent = noBotMode ? '🧪 Peaceful Test (No Bots)' : skinNames.join(' | ');
 
         camera.position.set(player.x, player.y, player.z);
         createPowerups();
@@ -3811,7 +5047,7 @@ function restartGame() {
         document.getElementById('minimap').style.display = 'none';
         document.getElementById('minimap-floor').style.display = 'none';
 
-        currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+        currentMap = forceMapNextRun ? resolveSelectedMap() : ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
         var mats = getMapMats();
         scene.background = new THREE.Color(mats.fogColor);
         scene.fog = new THREE.Fog(mats.fogColor, 2, 35);
@@ -3838,10 +5074,20 @@ function restartGame() {
         document.getElementById('escape-round').textContent = 'Round: 1';
         document.getElementById('escape-door-indicator').textContent = '🚪 FIND AN EXIT!';
         document.getElementById('minimap').style.display = 'none';
-        document.getElementById('minimap-floor').style.display = 'none';
+        var escFloorEl = document.getElementById('minimap-floor');
+        if (escFloorEl) {
+            if (currentMap === 'backrooms' && isBackroomsSecondFloorEnabled()) {
+                escFloorEl.classList.add('standalone');
+                escFloorEl.style.display = 'block';
+            } else {
+                escFloorEl.classList.remove('standalone');
+                escFloorEl.style.display = 'none';
+            }
+        }
 
         generateMaze();
         buildWorld();
+        rebuildPathGrid();
         createKanye();
         spawnEntities();
         createEscapeDoors();
@@ -3853,13 +5099,26 @@ function restartGame() {
         document.getElementById('endless-hud').style.display = 'none';
         document.getElementById('chaos-hud').style.display = 'none';
 
+        var normFloorEl = document.getElementById('minimap-floor');
         if (saveData.settings.minimapEnabled !== false) {
             document.getElementById('minimap').style.display = 'block';
-            document.getElementById('minimap-floor').style.display = 'block';
+            if (normFloorEl) {
+                normFloorEl.classList.remove('standalone');
+                normFloorEl.style.display = 'block';
+            }
+        } else if (normFloorEl) {
+            if (currentMap === 'backrooms' && isBackroomsSecondFloorEnabled()) {
+                normFloorEl.classList.add('standalone');
+                normFloorEl.style.display = 'block';
+            } else {
+                normFloorEl.classList.remove('standalone');
+                normFloorEl.style.display = 'none';
+            }
         }
 
         generateMaze();
         buildWorld();
+        rebuildPathGrid();
         createKanye();
         spawnEntities();
     }
@@ -3870,6 +5129,7 @@ function restartGame() {
     pausedTime = 0;
     lastPauseStart = 0;
     sessionCoins = 0;
+    updateTestBadgeUI();
 
     document.getElementById('hud-coins').textContent = '💰 0';
     document.getElementById('death-screen').style.display = 'none';

@@ -5,6 +5,8 @@
 function startGame() {
     document.getElementById('start-screen').classList.add('hidden');
     gameStarted = true;
+    isDead = false;
+    isPaused = false;
     isEscapeMode = false;
     isEndlessMode = false;
     isChaosMode = false;
@@ -13,6 +15,7 @@ function startGame() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
+    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
     resetSprintState();
 
     document.getElementById('hud-coins').textContent = '💰 0';
@@ -22,10 +25,20 @@ function startGame() {
     if (saveData.settings.minimapEnabled !== false) {
         document.getElementById('minimap').style.display = 'block';
         document.getElementById('minimap-floor').style.display = 'block';
+        document.getElementById('minimap-floor').classList.remove('standalone');
+    } else if (hasSecondFloorActive()) {
+        document.getElementById('minimap').style.display = 'none';
+        document.getElementById('minimap-floor').style.display = 'block';
+        document.getElementById('minimap-floor').classList.add('standalone');
+    } else {
+        document.getElementById('minimap').style.display = 'none';
+        document.getElementById('minimap-floor').style.display = 'none';
+        document.getElementById('minimap-floor').classList.remove('standalone');
     }
     document.getElementById('escape-hud').style.display = 'none';
     document.getElementById('endless-hud').style.display = 'none';
     document.getElementById('chaos-hud').style.display = 'none';
+    updateTestBadgeUI();
 
     clearScene();
     generateMaze();

@@ -5,6 +5,8 @@
 function startEndlessMode() {
     document.getElementById('start-screen').classList.add('hidden');
     gameStarted = true;
+    isDead = false;
+    isPaused = false;
     isEndlessMode = true;
     isEscapeMode = false;
     isChaosMode = false;
@@ -13,6 +15,7 @@ function startEndlessMode() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
+    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
     resetSprintState();
     endlessDoorsFound = 0;
 
@@ -24,6 +27,7 @@ function startEndlessMode() {
     document.getElementById('endless-hud').style.display = 'block';
     document.getElementById('endless-score').textContent = 'Doors: 0';
     document.getElementById('endless-door-indicator').textContent = '🚪 Explore to find doors...';
+    updateTestBadgeUI();
 
     clearScene();
     endlessChunks.clear();
@@ -32,7 +36,12 @@ function startEndlessMode() {
     endlessDoorsList = [];
     endlessDecorations = [];
 
-    currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+    if (forceMapNextRun) {
+        currentMap = forceMapNextRun;
+        forceMapNextRun = null;
+    } else {
+        currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+    }
 
     var mats = getMapMats();
     scene.background = new THREE.Color(mats.fogColor);
@@ -51,7 +60,7 @@ function startEndlessMode() {
     var shieldEl = document.getElementById('endless-shield-toggle');
     if (shieldEl && shieldEl.checked && saveData.coins >= 5) {
         saveData.coins -= 5;
-        player.shieldHits = saveData.upgrades.shield >= 3 ? 2 : 1;
+        player.shieldHits = getBaseShieldHits(false);
         document.getElementById('shield-indicator').style.opacity = '1';
         document.getElementById('slot-shield').classList.add('active');
         saveSaveData();
@@ -91,6 +100,8 @@ function spawnKanyeEndless() {
     if (spawn) { kanye.x = spawn.wx; kanye.z = spawn.wz; }
     else { kanye.x = player.x + 30; kanye.z = player.z + 30; }
 
+    kanye.baseY = 0;
+    kanye.y = 1.25;
     kanye.vx = 0;
     kanye.vz = 0;
     kanye.pathTimer = 0;
@@ -189,7 +200,6 @@ function generateEndlessChunk(cx, cz) {
     data.hasDoor = false;
     data.doorInfo = null;
     if (sr() < 0.05) {
-        // Anchor the door to a cell connected to the center of the local walkable area.
         var centerX = Math.floor(CHUNK_SIZE / 2);
         var centerZ = Math.floor(CHUNK_SIZE / 2);
         var anchor = null;
@@ -209,16 +219,15 @@ function generateEndlessChunk(cx, cz) {
                         var adjDir = adjDirs[adi];
                         var ax = xi + adjDir.dx, az = zi + adjDir.dz;
                         if (ax >= 0 && ax < CHUNK_SIZE && az >= 0 && az < CHUNK_SIZE && data.maze[ax][az] === 0) {
-                            // Require the open side to be reachable from the anchor and approachable from 2+ sides.
                             if (anchor && !chunkCellReachable(data, anchor.x, anchor.z, ax, az)) break;
-                            var openCount = 0;
+                            var openCount2 = 0;
                             var apDirs = [{ dx: -1, dz: 0 }, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
                             for (var ad2 = 0; ad2 < apDirs.length; ad2++) {
                                 var opx = ax + apDirs[ad2].dx;
                                 var opz = az + apDirs[ad2].dz;
-                                if (opx >= 0 && opx < CHUNK_SIZE && opz >= 0 && opz < CHUNK_SIZE && data.maze[opx][opz] === 0) openCount++;
+                                if (opx >= 0 && opx < CHUNK_SIZE && opz >= 0 && opz < CHUNK_SIZE && data.maze[opx][opz] === 0) openCount2++;
                             }
-                            if (openCount < 2) break;
+                            if (openCount2 < 2) break;
                             wallCandidates.push({ wx: xi, wz: zi, ax: ax, az: az, dir: adjDir });
                             break;
                         }
@@ -256,7 +265,6 @@ function buildEndlessChunkMeshes(cx, cz) {
     var mats = getMapMats();
     var meshes = [];
 
-    // One InstancedMesh per chunk replaces hundreds of individual wall meshes.
     var wallCount = 0;
     var wallXZ = [];
     for (var x = 0; x < CHUNK_SIZE; x++) {
@@ -395,7 +403,7 @@ function checkEndlessDoors() {
             sessionCoins += 3;
             document.getElementById('hud-coins').textContent = '💰 ' + sessionCoins;
 
-            if (endlessDoorsFound > (saveData.endlessRecord || 0)) {
+            if (!sessionUsedTestMode && endlessDoorsFound > (saveData.endlessRecord || 0)) {
                 saveData.endlessRecord = endlessDoorsFound;
                 saveSaveData();
             }

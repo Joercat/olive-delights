@@ -3,18 +3,12 @@
 // DARK ESCAPE MODE
 // A pitch-black Backrooms/Hospital escape. Find 3 keys (image asset) to unlock a
 // single exit door. The flashlight is the only reliable light source.
-//
-// Easy:     infinite battery, door-nearby notice.
-// Hard:     draining battery (visible), door proximity notice OFF, 2x coins,
-//           boosted shop prices, random temporary flashlight breaks.
-// Extreme:  draining battery (hidden), faster chaser, no door notice, 2x coins,
-//           5 coins per round won, random temporary flashlight breaks.
 // ==========================================
 
 var darkEscapeDoor = null;
 var darkEscapeKeys = [];
 
-var flashlightMaxBattery = 100; // Extended by flashlightLife upgrade at game start.
+var flashlightMaxBattery = 100;
 var darkEscapeElapsed = 0;
 var flashlightYaw = 0;
 var flashlightPitch = 0;
@@ -36,12 +30,12 @@ var flashlightLightTarget = null;
 var flashlightBodyGlow = null;
 
 var DARK_ESCAPE_POWERUP_URLS = {
-    ice:     'https://joercat.github.io/ice.png',
-    speed:   'https://joercat.github.io/speed.png',
-    shield:  'https://joercat.github.io/shield.png',
-    battery: 'https://joercat.github.io/battery-pickup-removebg-preview.png'
+    ice:     'assets/ice.png',
+    speed:   'assets/speed.png',
+    shield:  'assets/shield.png',
+    battery: 'assets/battery-pickup-removebg-preview.png'
 };
-var DARK_ESCAPE_KEY_URL = 'key.png?v=28';
+var DARK_ESCAPE_KEY_URL = 'key.png?v=27c';
 
 function startDarkEscapeMode(difficulty) {
     document.getElementById('start-screen').classList.add('hidden');
@@ -59,6 +53,7 @@ function startDarkEscapeMode(difficulty) {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
+    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
     resetSprintState();
     darkEscapeKeys = [];
     darkEscapeKeysFound = 0;
@@ -87,12 +82,12 @@ function startDarkEscapeMode(difficulty) {
 
     document.getElementById('hud-coins').textContent = '💰 0';
     document.getElementById('minimap').style.display = 'none';
-    document.getElementById('minimap-floor').style.display = 'none';
     document.getElementById('escape-hud').style.display = 'none';
     document.getElementById('endless-hud').style.display = 'none';
     document.getElementById('chaos-hud').style.display = 'none';
     document.getElementById('darkescape-hud').style.display = 'block';
     document.getElementById('win-screen').style.display = 'none';
+    updateTestBadgeUI();
 
     document.getElementById('darkescape-mode').textContent =
         isDarkEscapeExtreme ? '🔥 EXTREME' : isDarkEscapeHard ? '😈 HARD' : '🟢 EASY';
@@ -101,7 +96,6 @@ function startDarkEscapeMode(difficulty) {
         isDarkEscapeHard ? 'Find 3 keys...' : 'Find 3 keys...';
     document.getElementById('darkescape-keys').textContent = '🔑 0 / 3';
     document.getElementById('darkescape-battery').textContent = '🔋 100%';
-    // Hard shows the battery; Easy/Extreme hide it.
     document.getElementById('darkescape-battery-wrap').style.display = isDarkEscapeHard ? 'block' : 'none';
     document.getElementById('darkescape-door-indicator').textContent = '🔑 FIND 3 KEYS TO ESCAPE';
     document.getElementById('darkescape-door-indicator').classList.remove('nearby');
@@ -110,9 +104,16 @@ function startDarkEscapeMode(difficulty) {
         ' (or mobile 🔦) · Sprints: ' + (saveData.settings.sprintMode === 'toggle' ? 'toggle' : 'hold') +
         ' · change keys in Settings';
 
-    // No map picker on this mode.
-    currentMap = ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
+    currentMap = resolveSelectedMap();
     GRID_SIZE = getMapSize();
+
+    if (hasSecondFloorActive()) {
+        document.getElementById('minimap-floor').style.display = 'block';
+        document.getElementById('minimap-floor').classList.add('standalone');
+    } else {
+        document.getElementById('minimap-floor').classList.remove('standalone');
+        document.getElementById('minimap-floor').style.display = 'none';
+    }
 
     clearScene();
     generateMaze();
@@ -140,9 +141,6 @@ function createFlashlightSpot() {
         flashlightBodyGlow = null;
     }
     if (!isDarkEscapeMode) return;
-    // Main beam: a broad, soft cone that follows the camera. Because it is a
-    // real SpotLight the projected pool naturally widens and gets dimmer as it
-    // travels farther down the hallway/room.
     flashlightLight = new THREE.SpotLight(0xfff6dc, 11.0, 30, Math.PI / 5.5, 0.80, 2.0);
     flashlightLightTarget = new THREE.Object3D();
     scene.add(flashlightLight);
@@ -151,9 +149,6 @@ function createFlashlightSpot() {
     flashlightLight.position.set(player.x, player.y + 0.1, player.z);
     flashlightLightTarget.position.set(player.x, player.y, player.z - 12);
     flashlightLightTarget.updateMatrixWorld();
-    // Body glow: a short-range, very dull light around the player so the area
-    // right against them is always visible when the flashlight is off or broken.
-    // It fades out quickly with distance (decay 2 + short distance).
     flashlightBodyGlow = new THREE.PointLight(0xb5cbe5, 3.6, 8.5, 2);
     flashlightBodyGlow.position.set(player.x, player.y - 0.05, player.z);
     scene.add(flashlightBodyGlow);
@@ -171,8 +166,6 @@ function setupFlashlightBreaks() {
     flashlightBreakRemaining = 0;
     flashlightBreakPending = false;
 
-    // Extreme can temporarily lose the flashlight. Two independent 10% rolls per
-    // round, max two breaks, each at a random time. Hard never breaks.
     if (isDarkEscapeExtreme) {
         for (var i = 0; i < 2; i++) {
             if (Math.random() < 0.10) {
@@ -202,7 +195,6 @@ function updateFlashlightBreak(dt) {
             flashlightBreakPending = false;
             if (flashlightBreakWasOn && flashlightBattery > 0) flashlightOn = true;
             if (flashlightBreakTimes.length > 0) {
-                // Keep any remaining break with a fresh random timing + warning.
                 flashlightBreakTimes[0] = darkEscapeElapsed + 7 + Math.random() * 20;
                 flashlightBreakTimes.sort(function (a, b) { return a - b; });
             }
@@ -224,8 +216,6 @@ function updateFlashlightBreak(dt) {
 }
 
 function updateFlashlightAim(dt) {
-    // Keep the beam almost exactly under the crosshair. A tiny amount of smooth
-    // easing prevents it snapping, but it never visibly lags behind your aim.
     var yawTarget = player.yaw;
     var pitchTarget = player.pitch;
     flashlightYaw += angleDelta(flashlightYaw, yawTarget) * Math.min(1, dt * 14);
@@ -240,10 +230,6 @@ function updateFlashlightAim(dt) {
     flashlightLastZ = player.z;
 
     if (flashlightLight) {
-        // Aim exactly down the camera-forward direction, with a small downward
-        // bias so the cone blends onto the floor when you look straight ahead.
-        // Looking up points the beam at the ceiling; looking down puts it on the
-        // floor. This is what keeps the bright circle under the crosshair.
         flashlightLight.position.set(player.x, player.y + 0.1, player.z);
         var fwdX = -Math.sin(flashlightYaw);
         var fwdZ = -Math.cos(flashlightYaw);
@@ -272,7 +258,6 @@ function angleDelta(from, to) {
 function updateFlashlightFlicker(dt) {
     if (flashlightBreakActive) return;
     if (flashlightBreakPending) {
-        // Heavy flicker right before the break.
         flashlightFlickerRemaining = 0.08;
         flashlightFlickerStrength = 1.0;
         flashlightFlickerCooldown = 0;
@@ -289,16 +274,19 @@ function updateFlashlightFlicker(dt) {
 
 function respawnDarkEscapePowerup(pu) {
     var shuffled = shuffle(walkableCells.slice());
+    var pFootY = player.y - 1.6;
     for (var i = 0; i < shuffled.length; i++) {
         var cell = shuffled[i];
-        if (!isWalkableGrid(cell.x, cell.z)) continue;
+        var cf = cell.floor || 0;
+        if (!isWalkableGrid(cell.x, cell.z, cf)) continue;
         var pos = gridToWorld(cell.x, cell.z);
-        if (Math.hypot(pos.x - player.x, pos.z - player.z) < 9) continue;
+        var baseY = getFloorBaseY(cf);
+        if (Math.hypot(pos.x - player.x, baseY - pFootY, pos.z - player.z) < 9) continue;
         var tooClose = false;
         for (var pi = 0; pi < powerups.length; pi++) {
             var other = powerups[pi];
             if (other === pu || other.collected) continue;
-            if (Math.hypot(other.x - pos.x, other.z - pos.z) < MIN_POWERUP_SPACING) {
+            if (Math.hypot(other.x - pos.x, (other.baseY || 0) - baseY, other.z - pos.z) < MIN_POWERUP_SPACING) {
                 tooClose = true;
                 break;
             }
@@ -309,82 +297,95 @@ function respawnDarkEscapePowerup(pu) {
         pu.type = type;
         pu.x = pos.x;
         pu.z = pos.z;
+        pu.floor = cf;
+        pu.baseY = baseY;
         pu.collected = false;
         pu.respawnAt = null;
         pu.sprite = new THREE.Sprite(getSpriteMaterial(DARK_ESCAPE_POWERUP_URLS[type], true));
         pu.sprite.scale.set(1.2, 1.2, 1);
-        pu.sprite.position.set(pos.x, 0.8, pos.z);
+        pu.sprite.position.set(pos.x, baseY + 0.8, pos.z);
         scene.add(pu.sprite);
         return;
     }
     pu.respawnAt = Date.now() + 5000;
 }
 
-// Helper: create one key sprite at world (px, pz) and push into darkEscapeKeys.
-function placeKey(px, pz) {
+function placeKey(px, pz, floor) {
+    var baseY = getFloorBaseY(floor || 0);
     var sp = new THREE.Sprite(getSpriteMaterial(DARK_ESCAPE_KEY_URL, true));
     sp.scale.set(1.1, 1.1, 1);
-    sp.position.set(px, 0.9, pz);
+    sp.position.set(px, baseY + 0.9, pz);
     scene.add(sp);
-    darkEscapeKeys.push({ x: px, z: pz, sprite: sp, collected: false });
+    darkEscapeKeys.push({ x: px, z: pz, floor: floor || 0, baseY: baseY, sprite: sp, collected: false });
 }
 
-// Find a good world position for a key and call placeKey().
-// avoidPositions: array of {x,z} to keep distance from (other keys + player).
-function spawnOneKey(avoidPositions) {
+function spawnOneKey(avoidPositions, preferredFloor) {
     var spacingLevels = [15, 8, 4];
+    var pFootY = player.y - 1.6;
     for (var pass = 0; pass < spacingLevels.length; pass++) {
         var minSpacing = spacingLevels[pass];
         var minPlayer  = pass >= 2 ? 8 : 14;
-        var shuffled   = shuffle(walkableCells.slice());
+        var pool = walkableCells.filter(function (c) {
+            return preferredFloor === undefined || preferredFloor === null || (c.floor || 0) === preferredFloor;
+        });
+        if (pool.length < 1) pool = walkableCells.slice();
+        var shuffled = shuffle(pool);
         for (var k = 0; k < shuffled.length; k++) {
             var cell = shuffled[k];
-            if (!isWalkableGrid(cell.x, cell.z)) continue;
+            var cf = cell.floor || 0;
+            if (!isWalkableGrid(cell.x, cell.z, cf)) continue;
             var pos = gridToWorld(cell.x, cell.z);
-            if (Math.hypot(pos.x - player.x, pos.z - player.z) < minPlayer) continue;
+            var baseY = getFloorBaseY(cf);
+            if (Math.hypot(pos.x - player.x, baseY - pFootY, pos.z - player.z) < minPlayer) continue;
             var tooClose = false;
             for (var ai = 0; ai < avoidPositions.length; ai++) {
-                if (Math.hypot(avoidPositions[ai].x - pos.x, avoidPositions[ai].z - pos.z) < minSpacing) {
+                var avY = avoidPositions[ai].baseY || 0;
+                if (Math.hypot(avoidPositions[ai].x - pos.x, avY - baseY, avoidPositions[ai].z - pos.z) < minSpacing) {
                     tooClose = true; break;
                 }
             }
             if (tooClose) continue;
-            placeKey(pos.x, pos.z);
+            placeKey(pos.x, pos.z, cf);
             return;
         }
     }
-    // Last resort: any non-duplicate walkable cell.
     var all = shuffle(walkableCells.slice());
     for (var li = 0; li < all.length; li++) {
         var c = all[li];
-        if (!isWalkableGrid(c.x, c.z)) continue;
+        var lcf = c.floor || 0;
+        if (!isWalkableGrid(c.x, c.z, lcf)) continue;
         var lp = gridToWorld(c.x, c.z);
+        var lby = getFloorBaseY(lcf);
         var dup = false;
         for (var di = 0; di < avoidPositions.length; di++) {
-            if (avoidPositions[di].x === lp.x && avoidPositions[di].z === lp.z) { dup = true; break; }
+            if (avoidPositions[di].x === lp.x && avoidPositions[di].z === lp.z && (avoidPositions[di].baseY || 0) === lby) {
+                dup = true; break;
+            }
         }
-        if (!dup) { placeKey(lp.x, lp.z); return; }
+        if (!dup) { placeKey(lp.x, lp.z, lcf); return; }
     }
 }
 
 function spawnDarkEscapeKeys() {
-    // Remove any existing key sprites.
     for (var i = 0; i < darkEscapeKeys.length; i++) {
         if (darkEscapeKeys[i].sprite) scene.remove(darkEscapeKeys[i].sprite);
     }
     darkEscapeKeys = [];
     if (walkableCells.length < 6) return;
 
+    var pBaseY = player.y - 1.6;
     if (isDarkEscapeExtreme) {
-        // Extreme: reveal one key at a time. Spawn only the first key now;
-        // subsequent keys appear after each one is collected.
-        spawnOneKey([{ x: player.x, z: player.z }]);
+        spawnOneKey([{ x: player.x, z: player.z, baseY: pBaseY }], 0);
     } else {
-        // Easy / Hard: all 3 keys visible on the map from the start.
-        var avoid = [{ x: player.x, z: player.z }];
+        var avoid = [{ x: player.x, z: player.z, baseY: pBaseY }];
+        // Spread keys across both floors when Backrooms 2nd Floor is enabled!
+        var floorPlan = hasSecondFloorActive() ? [0, 1, null] : [0, 0, 0];
         for (var n = 0; n < 3; n++) {
-            spawnOneKey(avoid);
-            if (darkEscapeKeys.length > n) avoid.push({ x: darkEscapeKeys[darkEscapeKeys.length - 1].x, z: darkEscapeKeys[darkEscapeKeys.length - 1].z });
+            spawnOneKey(avoid, floorPlan[n]);
+            if (darkEscapeKeys.length > n) {
+                var last = darkEscapeKeys[darkEscapeKeys.length - 1];
+                avoid.push({ x: last.x, z: last.z, baseY: last.baseY || 0 });
+            }
         }
     }
 }
@@ -392,47 +393,59 @@ function spawnDarkEscapeKeys() {
 function spawnDarkEscapeDoor() {
     if (darkEscapeDoor) return;
 
+    var pFloor = getPlayerFloor();
+    var pFootY = player.y - 1.6;
     var pGrid = worldToGrid(player.x, player.z);
-    var pSnap = findNearestPathWalkableGrid(pGrid.x, pGrid.z, 3);
+    var pSnap = findNearestPathWalkableGrid(pGrid.x, pGrid.z, 3, pFloor);
+    var floors = hasSecondFloorActive() ? [0, 1] : [0];
     var candidates = [];
 
-    for (var x = 2; x < GRID_SIZE - 2; x++) {
-        for (var z = 2; z < GRID_SIZE - 2; z++) {
-            if (maze[x][z] !== 1) continue;
-            var adjDirs = [
-                { wx: x - 1, wz: z, dir: 'east' },
-                { wx: x + 1, wz: z, dir: 'west' },
-                { wx: x, wz: z - 1, dir: 'south' },
-                { wx: x, wz: z + 1, dir: 'north' }
-            ];
-            for (var ai = 0; ai < adjDirs.length; ai++) {
-                var adj = adjDirs[ai];
-                if (adj.wx < 0 || adj.wx >= GRID_SIZE || adj.wz < 0 || adj.wz >= GRID_SIZE) continue;
-                if (!isPathWalkableGrid(adj.wx, adj.wz)) continue;
+    for (var fi = 0; fi < floors.length; fi++) {
+        var fl = floors[fi];
+        var flMaze = getMazeForFloor(fl);
+        var flBaseY = getFloorBaseY(fl);
+        if (!flMaze) continue;
 
-                // Accessible from at least two sides.
-                var openSides = 0;
-                var approach = [{ dx: -1, dz: 0 }, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
-                for (var ap = 0; ap < approach.length; ap++) {
-                    if (isPathWalkableGrid(adj.wx + approach[ap].dx, adj.wz + approach[ap].dz)) openSides++;
-                }
-                if (openSides < 2) continue;
+        for (var x = 2; x < GRID_SIZE - 2; x++) {
+            for (var z = 2; z < GRID_SIZE - 2; z++) {
+                if (isStairShaftCell(x, z)) continue;
+                if (flMaze[x][z] !== 1) continue;
+                var adjDirs = [
+                    { wx: x - 1, wz: z, dir: 'east' },
+                    { wx: x + 1, wz: z, dir: 'west' },
+                    { wx: x, wz: z - 1, dir: 'south' },
+                    { wx: x, wz: z + 1, dir: 'north' }
+                ];
+                for (var ai = 0; ai < adjDirs.length; ai++) {
+                    var adj = adjDirs[ai];
+                    if (adj.wx < 0 || adj.wx >= GRID_SIZE || adj.wz < 0 || adj.wz >= GRID_SIZE) continue;
+                    if (isStairShaftCell(adj.wx, adj.wz)) continue;
+                    if (!isPathWalkableGrid(adj.wx, adj.wz, fl)) continue;
 
-                var doorPos = gridToWorld(x, z);
-                if (Math.hypot(doorPos.x - player.x, doorPos.z - player.z) < 25) continue;
+                    var openSides = 0;
+                    var approach = [{ dx: -1, dz: 0 }, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
+                    for (var ap = 0; ap < approach.length; ap++) {
+                        if (isPathWalkableGrid(adj.wx + approach[ap].dx, adj.wz + approach[ap].dz, fl)) openSides++;
+                    }
+                    if (openSides < 2) continue;
 
-                if (findPath(pSnap.x, pSnap.z, adj.wx, adj.wz, 9000).length > 0) {
-                    candidates.push({ x: x, z: z, adjX: adj.wx, adjZ: adj.wz, dir: adj.dir });
+                    var doorPos = gridToWorld(x, z);
+                    if (Math.hypot(doorPos.x - player.x, flBaseY - pFootY, doorPos.z - player.z) < 25) continue;
+
+                    if (isMultiFloorReachable(pSnap.x, pSnap.z, pFloor, adj.wx, adj.wz, fl)) {
+                        candidates.push({ x: x, z: z, adjX: adj.wx, adjZ: adj.wz, dir: adj.dir, floor: fl });
+                    }
                 }
             }
         }
     }
 
     if (candidates.length === 0) {
-        // Fallback: place the exit on the first wall adjacent to a path tile.
+        var fMaze = getMazeForFloor(pFloor);
         for (var fx = 1; fx < GRID_SIZE - 1; fx++) {
             for (var fz = 1; fz < GRID_SIZE - 1; fz++) {
-                if (maze[fx][fz] !== 1) continue;
+                if (isStairShaftCell(fx, fz)) continue;
+                if (fMaze[fx][fz] !== 1) continue;
                 var fallbackAdj = [
                     { wx: fx - 1, wz: fz, dir: 'east' },
                     { wx: fx + 1, wz: fz, dir: 'west' },
@@ -442,9 +455,10 @@ function spawnDarkEscapeDoor() {
                 for (var fa = 0; fa < fallbackAdj.length; fa++) {
                     var faA = fallbackAdj[fa];
                     if (faA.wx < 0 || faA.wx >= GRID_SIZE || faA.wz < 0 || faA.wz >= GRID_SIZE) continue;
-                    if (isPathWalkableGrid(faA.wx, faA.wz) &&
-                        findPath(pSnap.x, pSnap.z, faA.wx, faA.wz, 9000).length > 0) {
-                        candidates.push({ x: fx, z: fz, adjX: faA.wx, adjZ: faA.wz, dir: faA.dir });
+                    if (isStairShaftCell(faA.wx, faA.wz)) continue;
+                    if (isPathWalkableGrid(faA.wx, faA.wz, pFloor) &&
+                        isMultiFloorReachable(pSnap.x, pSnap.z, pFloor, faA.wx, faA.wz, pFloor)) {
+                        candidates.push({ x: fx, z: fz, adjX: faA.wx, adjZ: faA.wz, dir: faA.dir, floor: pFloor });
                         break;
                     }
                 }
@@ -455,25 +469,31 @@ function spawnDarkEscapeDoor() {
     }
     if (candidates.length === 0) return;
     var pick = candidates[Math.floor(Math.random() * candidates.length)];
-    // Place the door mesh at the exact face between the wall cell and the
-    // walkable corridor tile — midpoint of their two world centres.
     var wallWorldPos = gridToWorld(pick.x, pick.z);
     var adjWorldPos  = gridToWorld(pick.adjX, pick.adjZ);
+    var baseY = getFloorBaseY(pick.floor || 0);
     var faceX = (wallWorldPos.x + adjWorldPos.x) / 2;
     var faceZ = (wallWorldPos.z + adjWorldPos.z) / 2;
-    var mesh = createDoorMesh(faceX, faceZ, pick.dir, 0x00e5ff, true);
+    var mesh = createDoorMesh(faceX, faceZ, pick.dir, 0x00e5ff, true, baseY);
     scene.add(mesh);
-    // Trigger position is the centre of the walkable tile beside the door.
-    darkEscapeDoor = { mesh: mesh, x: adjWorldPos.x, z: adjWorldPos.z, gridX: pick.x, gridZ: pick.z };
+    darkEscapeDoor = {
+        mesh: mesh,
+        x: adjWorldPos.x,
+        z: adjWorldPos.z,
+        gridX: pick.x,
+        gridZ: pick.z,
+        floor: pick.floor || 0,
+        baseY: baseY
+    };
     showPickupMessage('🗝️ ALL KEYS FOUND! FIND THE DOOR!', 2600);
 }
 
 function checkDarkEscapeProgress() {
-    // Collect keys.
+    var pFootY = player.y - 1.6;
     for (var i = 0; i < darkEscapeKeys.length; i++) {
         var key = darkEscapeKeys[i];
         if (key.collected) continue;
-        if (Math.hypot(key.x - player.x, key.z - player.z) < 1.6) {
+        if (Math.abs((key.baseY || 0) - pFootY) < 1.6 && Math.hypot(key.x - player.x, key.z - player.z) < 1.6) {
             key.collected = true;
             if (key.sprite) scene.remove(key.sprite);
             darkEscapeKeysFound++;
@@ -483,25 +503,28 @@ function checkDarkEscapeProgress() {
                 spawnDarkEscapeDoor();
             } else {
                 showPickupMessage('🔑 KEY FOUND! ' + darkEscapeKeysFound + '/3', 1800);
-                // Extreme: spawn the next key now that this one is collected.
                 if (isDarkEscapeExtreme) {
-                    var avoidList = [{ x: player.x, z: player.z }];
+                    var avoidList = [{ x: player.x, z: player.z, baseY: pFootY }];
                     for (var ki2 = 0; ki2 < darkEscapeKeys.length; ki2++) {
-                        avoidList.push({ x: darkEscapeKeys[ki2].x, z: darkEscapeKeys[ki2].z });
+                        avoidList.push({
+                            x: darkEscapeKeys[ki2].x,
+                            z: darkEscapeKeys[ki2].z,
+                            baseY: darkEscapeKeys[ki2].baseY || 0
+                        });
                     }
-                    spawnOneKey(avoidList);
+                    var nextFloor = hasSecondFloorActive() ? (darkEscapeKeysFound % 2 === 1 ? 1 : null) : 0;
+                    spawnOneKey(avoidList, nextFloor);
                 }
             }
         }
     }
 
-    // Guarantee the exit always exists once all keys are collected.
     if (darkEscapeKeysFound >= 3 && !darkEscapeDoor) spawnDarkEscapeDoor();
 
-    // Door check (uses the walkable tile beside the door so it is actually reachable).
     if (darkEscapeDoor && darkEscapeKeysFound >= 3) {
         var dist = Math.hypot(darkEscapeDoor.x - player.x, darkEscapeDoor.z - player.z);
-        if (dist < 2.5) {
+        var dy = Math.abs((darkEscapeDoor.baseY || 0) - pFootY);
+        if (dy < 1.5 && dist < 2.5) {
             winDarkEscape();
         }
     }
@@ -515,16 +538,11 @@ function updateDarkEscape(dt) {
     updateFlashlightFlicker(dt);
     updateFlashlightBreak(dt);
 
-    // Battery: hard and extreme drain when the flashlight is on; easy is infinite.
-    // Drain rate 0.848/s base. flashlightLife upgrade reduces drain rate.
-    // flashlightNoDrain (from battery Lv3 bonus) pauses drain temporarily.
     if (player.flashlightNoDrain) {
         player.flashlightNoDrainTimer -= dt;
         if (player.flashlightNoDrainTimer <= 0) player.flashlightNoDrain = false;
     }
     if ((isDarkEscapeHard || isDarkEscapeExtreme) && flashlightOn && !flashlightBreakActive && !player.flashlightNoDrain) {
-        // Drain at base rate 0.848/s; flashlightMaxBattery is increased by flashlightLife upgrade
-        // so the player gets proportionally more time, not a slower drain rate.
         flashlightBattery = Math.max(0, flashlightBattery - dt * 0.848);
         if (flashlightBattery <= 0) {
             flashlightBattery = 0;
@@ -533,7 +551,6 @@ function updateDarkEscape(dt) {
         }
     }
 
-    // Dark Escape powerups respawn so they are effectively unlimited during a round.
     if (isDarkEscapeMode) {
         for (var pi = 0; pi < powerups.length; pi++) {
             var pu = powerups[pi];
@@ -545,14 +562,17 @@ function updateDarkEscape(dt) {
 
     applyFlashlightVisuals();
 
-    // Update the door-indicator every frame so Easy always shows the nearby notice.
     var indicator = document.getElementById('darkescape-door-indicator');
+    var pFootY = player.y - 1.6;
     if (darkEscapeKeysFound < 3) {
-        // Still hunting keys — leave it as-is (set on reset / key pickup).
+        // Still hunting keys
     } else if (darkEscapeDoor) {
-        var dist = Math.hypot(darkEscapeDoor.x - player.x, darkEscapeDoor.z - player.z);
+        var dist = Math.hypot(
+            darkEscapeDoor.x - player.x,
+            ((darkEscapeDoor.baseY || 0) - pFootY) * 1.8,
+            darkEscapeDoor.z - player.z
+        );
         if (isDarkEscapeHard || isDarkEscapeExtreme) {
-            // Hard and Extreme: no proximity notice.
             indicator.textContent = '🚪 FIND AN EXIT!';
             indicator.classList.remove('nearby');
         } else if (dist < 15) {
@@ -563,27 +583,36 @@ function updateDarkEscape(dt) {
             indicator.classList.remove('nearby');
         }
     } else {
-        // Door not spawned yet (shouldn't happen if keys >= 3, but guard anyway).
         indicator.textContent = '🚪 FIND AN EXIT!';
         indicator.classList.remove('nearby');
     }
 
-    // Run the chaser AI and handle kill/audio/danger display directly here
-    // (updateKanye is skipped for Dark Escape in the game loop).
     if (!darkEscapeWon) {
+        var fear = document.getElementById('fear-overlay');
+        var warn = document.getElementById('warning');
+
+        if (noBotMode) {
+            if (kanye.sprite) kanye.sprite.visible = false;
+            setAudioVolume(0);
+            if (fear) fear.style.opacity = '0';
+            if (warn) warn.style.opacity = '0';
+            return;
+        }
+        if (kanye.sprite && !kanye.sprite.visible) kanye.sprite.visible = true;
+
         var deToDist = updateSingleNextbot(kanye, dt);
         if (deToDist !== undefined) {
+            var sameHeight = Math.abs((kanye.baseY || 0) - pFootY) < 1.6;
+            var audioDist = sameHeight ? deToDist : deToDist + 22;
             var audioRange = 90;
-            var vol = deToDist < audioRange ? Math.pow(1 - (deToDist / audioRange), 0.35) : 0;
+            var vol = audioDist < audioRange ? Math.pow(1 - (audioDist / audioRange), 0.35) : 0;
             setAudioVolume(vol);
 
-            // "HE'S CLOSE" with proper line-of-sight — never fires through walls.
-            var fear = document.getElementById('fear-overlay');
-            var warn = document.getElementById('warning');
-            var deLos = hasClearLineOfSight(kanye.x, kanye.z, player.x, player.z);
-            updateCloseDanger(fear, warn, deToDist, deLos);
+            var deLos = sameHeight && hasClearLineOfSight(kanye.x, kanye.z, player.x, player.z, kanye.baseY);
+            updateCloseDanger(fear, warn, sameHeight ? deToDist : Infinity, deLos);
 
-            if (deToDist < 1.2) {
+            var d2d = Math.hypot(kanye.x - player.x, kanye.z - player.z);
+            if (sameHeight && d2d < 1.2) {
                 if (handleNextbotCatch(kanye)) killPlayer();
             }
         }
@@ -595,14 +624,10 @@ function applyFlashlightVisuals() {
     var vision = document.getElementById('flashlight-vision');
     if (!overlay) return;
 
-    // The light stays on while the flashlight is active. Flicker only dims the
-    // beam slightly; it never blanks the whole screen. When off/dead/broken the
-    // body glow keeps a very short, dull pool around the player.
     var active = flashlightOn && flashlightBattery > 0 && !flashlightBreakActive;
     var visible = active;
     var flickering = active && (flashlightFlickerRemaining > 0 || flashlightBreakPending);
 
-    // The beam/glow is always a simple cone centered exactly on the crosshair.
     overlay.style.setProperty('--fx', '50%');
     overlay.style.setProperty('--fy', '50%');
     if (vision) {
@@ -616,7 +641,6 @@ function applyFlashlightVisuals() {
         if (vision) {
             vision.classList.add('flashlight-on');
             vision.classList.remove('flashlight-off');
-            // Flicker only a small brightness dip; the flashlight never vanishes.
             var visionGlow = flickering ? 0.30 + Math.random() * 0.08 : 0.40;
             vision.style.opacity = String(visionGlow);
             var flickerDark = flickering ? 0.05 + Math.random() * 0.08 : 0;
@@ -631,7 +655,6 @@ function applyFlashlightVisuals() {
         if (vision) {
             vision.classList.remove('flashlight-on');
             vision.classList.add('flashlight-off');
-            // Small bluish/grey player glow when there is no flashlight.
             vision.style.opacity = String(0.36 + Math.random() * 0.03);
         }
         overlay.style.opacity = '0.66';
@@ -643,9 +666,6 @@ function applyFlashlightVisuals() {
         batteryText.textContent = '🔋 ' + battPct + '%';
     }
 
-    // Fog is what actually creates the "short, fading light" feeling. On: you can
-    // see a good distance down the hall. Off/broken: only a few feet around you
-    // remain visible, and it darkens very quickly with distance.
     if (scene && scene.fog) {
         if (visible) {
             var far = flickering ? 18 + Math.random() * 4 : 24;
@@ -661,8 +681,6 @@ function applyFlashlightVisuals() {
         flashlightLight.intensity = visible ? (flickering ? 7.6 + Math.random() * 1.0 : 10.5) : 0;
     }
     if (flashlightBodyGlow) {
-        // Slightly brighter when the main beam is off so the player always has a
-        // faint circle around them. Always short range.
         flashlightBodyGlow.intensity = visible ? 0.70 : 3.6;
     }
 }
@@ -673,12 +691,14 @@ function winDarkEscape() {
     var reward = isDarkEscapeExtreme ? 5 : (isDarkEscapeHard ? 20 : 10);
     sessionCoins += reward;
 
-    saveData.coins += sessionCoins;
-    saveSaveData();
+    if (!sessionUsedTestMode) {
+        saveData.coins += sessionCoins;
+        saveSaveData();
+    }
 
     stopAudio();
     document.getElementById('coins-earned').textContent = '+' + sessionCoins + ' coins';
-    document.getElementById('win-coins').textContent = '+' + sessionCoins + ' coins';
+    document.getElementById('win-coins').textContent = '+' + sessionCoins + ' coins' + (sessionUsedTestMode ? ' (Test Mode)' : '');
     document.getElementById('win-msg').textContent = isDarkEscapeExtreme
         ? 'EXTREME MODE complete! You escaped the pure dark!'
         : isDarkEscapeHard
