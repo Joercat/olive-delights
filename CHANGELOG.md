@@ -1,5 +1,8 @@
 # Olive Delights — Changelog
 
+## v2.7.4
+Fixed desktop touch-laptop input detection so mobile controls never appear on desktop, added embedded local data-URI bundle (`js/assets-data.js`) for zero-error offline/`file://` loading of textures, skins, sprites, and audio, upgraded Dark Escape to per-pixel `MeshPhongMaterial` lighting and unified world-space UV scaling across all maps, added mouse drag & arrow-key look fallbacks alongside pointer lock, and strictly isolated the `"olive"` secret test menu from normal game modes.
+
 ## v2.7.3
 Added optional Backrooms 2nd floor (Level 1: Habitable Zone) connected by staircases, authentic real Level 0 & Level 1 textures, local repo bundling for all external assets, and a secret peaceful testing menu (`olive`).
 

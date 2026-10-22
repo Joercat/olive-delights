@@ -38,6 +38,7 @@ var DARK_ESCAPE_POWERUP_URLS = {
 var DARK_ESCAPE_KEY_URL = 'key.png?v=27c';
 
 function startDarkEscapeMode(difficulty) {
+    prepareRunSession();
     document.getElementById('start-screen').classList.add('hidden');
     gameStarted = true;
     isDead = false;
@@ -53,7 +54,6 @@ function startDarkEscapeMode(difficulty) {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
-    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
     resetSprintState();
     darkEscapeKeys = [];
     darkEscapeKeysFound = 0;
@@ -126,7 +126,8 @@ function startDarkEscapeMode(difficulty) {
     setupFlashlightBreaks();
     initAudio();
     applyFlashlightVisuals();
-    if (!isMobile) renderer.domElement.requestPointerLock();
+    syncMobileControlsDOM();
+    safeRequestPointerLock();
 }
 
 function createFlashlightSpot() {
@@ -705,7 +706,9 @@ function winDarkEscape() {
             ? 'HARD MODE complete! You escaped the darkness!'
             : 'You found all 3 keys and escaped!';
     document.getElementById('win-screen').style.display = 'flex';
-    if (!isMobile) document.exitPointerLock();
+    mouseDragLook.active = false;
+    if (!isMobile) safeExitPointerLock();
+    syncMobileControlsDOM();
 }
 
 function toggleFlashlight() {
@@ -776,5 +779,6 @@ function resetDarkEscapeState() {
 
 function restartDarkEscape() {
     var diff = isDarkEscapeExtreme ? 'extreme' : (isDarkEscapeHard ? 'hard' : 'easy');
+    if (sessionUsedTestMode) launchingSecretTestRun = true;
     startDarkEscapeMode(diff);
 }

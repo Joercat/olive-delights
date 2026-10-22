@@ -3,6 +3,7 @@
 // ESCAPE MODE (2 verified reachable doors per round)
 // ==========================================
 function startEscapeMode() {
+    prepareRunSession();
     document.getElementById('start-screen').classList.add('hidden');
     gameStarted = true;
     isDead = false;
@@ -16,7 +17,6 @@ function startEscapeMode() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
-    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
     resetSprintState();
 
     document.getElementById('hud-coins').textContent = '💰 0';
@@ -38,6 +38,7 @@ function startEscapeMode() {
     document.getElementById('escape-door-indicator').textContent = '🚪 FIND AN EXIT!';
     document.getElementById('escape-door-indicator').classList.remove('nearby');
     updateTestBadgeUI();
+    syncMobileControlsDOM();
 
     clearScene();
     generateMaze();
@@ -46,7 +47,7 @@ function startEscapeMode() {
     spawnEntities();
     createEscapeDoors();
     initAudio();
-    if (!isMobile) renderer.domElement.requestPointerLock();
+    safeRequestPointerLock();
 }
 
 function collectFloorDoorCandidates(floor, pFloor, pSnap) {

@@ -3,6 +3,7 @@
 // ENDLESS MODE (infinite chunk-based procedural world)
 // ==========================================
 function startEndlessMode() {
+    prepareRunSession();
     document.getElementById('start-screen').classList.add('hidden');
     gameStarted = true;
     isDead = false;
@@ -15,7 +16,6 @@ function startEndlessMode() {
     lastPauseStart = 0;
     stamina = maxStamina = getMaxStamina();
     sessionCoins = 0;
-    sessionUsedTestMode = !!(noBotMode || testInfiniteStamina);
     resetSprintState();
     endlessDoorsFound = 0;
 
@@ -28,6 +28,7 @@ function startEndlessMode() {
     document.getElementById('endless-score').textContent = 'Doors: 0';
     document.getElementById('endless-door-indicator').textContent = '🚪 Explore to find doors...';
     updateTestBadgeUI();
+    syncMobileControlsDOM();
 
     clearScene();
     endlessChunks.clear();
@@ -45,8 +46,9 @@ function startEndlessMode() {
 
     var mats = getMapMats();
     scene.background = new THREE.Color(mats.fogColor);
-    scene.fog = new THREE.Fog(mats.fogColor, 2, 35);
+    scene.fog = new THREE.Fog(mats.fogColor, 6, 48);
     ensureAmbientLight();
+    worldAmbientLight.intensity = 0.92;
 
     player.x = 2 * CELL;
     player.z = 2 * CELL;
@@ -75,7 +77,7 @@ function startEndlessMode() {
     createCoins();
     camera.position.set(player.x, player.y, player.z);
     initAudio();
-    if (!isMobile) renderer.domElement.requestPointerLock();
+    safeRequestPointerLock();
 }
 
 function ensurePlayerWalkable() {
@@ -262,7 +264,7 @@ function buildEndlessChunkMeshes(cx, cz) {
     var chunk = endlessChunks.get(key);
     if (!chunk) return;
 
-    var mats = getMapMats();
+    var mats = getEndlessChunkMats();
     var meshes = [];
 
     var wallCount = 0;
@@ -334,11 +336,13 @@ function disposeMeshOnly(obj) {
     if (!obj) return;
     if (obj.isGroup) {
         obj.traverse(function (child) {
-            disposeMeshOnly(child);
+            if (child !== obj) disposeMeshOnly(child);
         });
         return;
     }
-    if (obj.geometry && !(obj.geometry.userData && obj.geometry.userData.shared)) obj.geometry.dispose();
+    if (!obj.isSprite && obj.geometry && !(obj.geometry.userData && obj.geometry.userData.shared)) {
+        obj.geometry.dispose();
+    }
     var mats = obj.material ? (Array.isArray(obj.material) ? obj.material : [obj.material]) : [];
     for (var i = 0; i < mats.length; i++) {
         var m = mats[i];

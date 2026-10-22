@@ -2,8 +2,28 @@
 // ==========================================
 // VERSION
 // ==========================================
-var GAME_VERSION = '2.7.3';
-var GAME_BUILD_CACHE = 'v27c';
+var GAME_VERSION = '2.7.4';
+var GAME_BUILD_CACHE = 'v27d';
+
+function resolveAssetUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    if (url.indexOf('data:') === 0) return url;
+    var clean = url.split('?')[0].split('#')[0];
+    if (typeof EMBEDDED_ASSETS !== 'undefined' && EMBEDDED_ASSETS && EMBEDDED_ASSETS[clean]) {
+        return EMBEDDED_ASSETS[clean];
+    }
+    return url;
+}
+
+function dataUriToArrayBuffer(dataUri) {
+    var commaIdx = dataUri.indexOf(',');
+    var b64 = commaIdx >= 0 ? dataUri.substring(commaIdx + 1) : dataUri;
+    var bin = atob(b64);
+    var len = bin.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+}
 
 // ==========================================
 // SAVE DATA
@@ -218,9 +238,14 @@ var testInfiniteStamina = false;
 var testStartFloor = 0;
 var sessionUsedTestMode = false;
 var forceMapNextRun = null;
+var testForceSecondFloor = null;
+var secretTestSecondFloorPref = true;
+var launchingSecretTestRun = false;
 var secretModalOpen = false;
 var secretWasPausedBefore = false;
 var secretKeyBuffer = '';
+var lastSecretKeyTime = 0;
+var mouseDragLook = { active: false, lastX: 0, lastY: 0 };
 
 var skinAudioBuffer = null;
 var skinAudioSource = null;
@@ -368,13 +393,13 @@ function getSharedCircleGeo() {
 
 function getFloorGeo(size) {
     var key = 'floor' + size;
-    if (!SHARED_GEO[key]) SHARED_GEO[key] = markShared(new THREE.PlaneGeometry(size, size));
+    if (!SHARED_GEO[key]) SHARED_GEO[key] = markShared(new THREE.PlaneGeometry(size, size, 32, 32));
     return SHARED_GEO[key];
 }
 
 function getTexture(url, nearest) {
     if (TEXTURE_CACHE[url]) return TEXTURE_CACHE[url];
-    var tex = textureLoader.load(url);
+    var tex = textureLoader.load(resolveAssetUrl(url));
     if (nearest) {
         tex.magFilter = THREE.NearestFilter;
         tex.minFilter = THREE.NearestFilter;
@@ -443,7 +468,68 @@ function getTabAllowedMaps(tabId) {
     return ['backrooms', 'hospital', 'forest'];
 }
 
+function safeRequestPointerLock() {
+    if (isMobile || !renderer || !renderer.domElement || !renderer.domElement.requestPointerLock) return;
+    try {
+        var req = renderer.domElement.requestPointerLock();
+        if (req && typeof req.catch === 'function') req.catch(function () {});
+    } catch (e) {}
+}
+
+function safeExitPointerLock() {
+    try {
+        if (document.pointerLockElement && document.exitPointerLock) {
+            document.exitPointerLock();
+        }
+    } catch (e) {}
+}
+
+function updateLookHintUI() {
+    var el = document.getElementById('look-hint');
+    if (!el) return;
+    var show = gameStarted && !isDead && !isPaused && !secretModalOpen &&
+        !(isDarkEscapeMode && darkEscapeWon) && !isMobile && !isLocked;
+    el.style.display = show ? 'block' : 'none';
+}
+
+function syncMobileControlsDOM() {
+    var activeGameplay = gameStarted && !isDead && !isPaused && !secretModalOpen &&
+        !(isDarkEscapeMode && darkEscapeWon);
+    document.body.classList.toggle('is-mobile', isMobile);
+    document.body.classList.toggle('in-active-game', isMobile && activeGameplay);
+    document.body.classList.toggle('is-dark-escape', isMobile && activeGameplay && isDarkEscapeMode);
+
+    var mc = document.getElementById('mobile-controls');
+    var bj = document.getElementById('btn-jump');
+    var bs = document.getElementById('btn-sprint');
+    var bf = document.getElementById('btn-flashlight');
+    var bp = document.getElementById('btn-pause');
+
+    if (!isMobile || !activeGameplay) {
+        if (mc) mc.style.display = 'none';
+        if (bj) bj.style.display = 'none';
+        if (bs) bs.style.display = 'none';
+        if (bf) bf.style.display = 'none';
+        if (bp) bp.style.display = 'none';
+        if (!isMobile) {
+            mobileJoystick.active = false;
+            mobileJoystick.moveX = 0;
+            mobileJoystick.moveZ = 0;
+            mobileSprintActive = false;
+            mobileJumpPressed = false;
+        }
+    } else {
+        if (mc) mc.style.display = 'block';
+        if (bj) bj.style.display = 'flex';
+        if (bs) bs.style.display = 'flex';
+        if (bp) bp.style.display = 'flex';
+        if (bf) bf.style.display = isDarkEscapeMode ? 'flex' : 'none';
+    }
+    updateLookHintUI();
+}
+
 function isBackroomsSecondFloorEnabled() {
+    if (testForceSecondFloor !== null) return !!testForceSecondFloor;
     return saveData.settings.backroomsSecondFloor === true;
 }
 
@@ -470,10 +556,14 @@ function isStairShaftCell(gx, gz) {
 }
 
 function syncSecondFloorCheckboxes() {
-    var enabled = isBackroomsSecondFloorEnabled();
+    var enabled = saveData.settings.backroomsSecondFloor === true;
     var boxes = document.querySelectorAll('.backrooms-2f-checkbox');
     for (var i = 0; i < boxes.length; i++) {
         boxes[i].checked = enabled;
+    }
+    var sec2f = document.getElementById('secret-2f-toggle');
+    if (sec2f) {
+        sec2f.checked = testForceSecondFloor !== null ? !!testForceSecondFloor : secretTestSecondFloorPref;
     }
 }
 
@@ -483,14 +573,42 @@ function setBackroomsSecondFloor(val) {
     syncSecondFloorCheckboxes();
 }
 
+function setSecretTestSecondFloor(val) {
+    secretTestSecondFloorPref = !!val;
+    if (gameStarted) testForceSecondFloor = secretTestSecondFloorPref;
+    syncSecondFloorCheckboxes();
+}
+
+function resetSecretTestOverrides() {
+    noBotMode = false;
+    testInfiniteStamina = false;
+    testStartFloor = 0;
+    forceMapNextRun = null;
+    testForceSecondFloor = null;
+    sessionUsedTestMode = false;
+    updateTestBadgeUI();
+    syncSecretMenuUI();
+}
+
+function prepareRunSession() {
+    resetDarkEscapeState();
+    if (launchingSecretTestRun) {
+        launchingSecretTestRun = false;
+        sessionUsedTestMode = true;
+    } else {
+        resetSecretTestOverrides();
+    }
+}
+
 function updateTestBadgeUI() {
     var badge = document.getElementById('test-mode-badge');
     if (!badge) return;
-    if (gameStarted && (noBotMode || testInfiniteStamina)) {
+    if (gameStarted && (noBotMode || testInfiniteStamina || testForceSecondFloor !== null)) {
         var parts = [];
         if (noBotMode) parts.push('NO BOT');
+        else parts.push('TEST RUN');
         if (testInfiniteStamina) parts.push('INF STAMINA');
-        badge.textContent = '🧪 TEST MODE · ' + parts.join(' · ');
+        badge.textContent = '🧪 SECRET TEST · ' + parts.join(' · ');
         badge.style.display = 'block';
     } else {
         badge.style.display = 'none';
@@ -514,6 +632,9 @@ function syncSecretMenuUI() {
 function openSecretTestMenu() {
     var modal = document.getElementById('secret-test-modal');
     if (!modal) return;
+    keys = {};
+    mouseDragLook.active = false;
+    resetSprintState();
     secretModalOpen = true;
     secretWasPausedBefore = isPaused;
     if (gameStarted && !isDead && !isPaused) {
@@ -521,10 +642,9 @@ function openSecretTestMenu() {
         lastPauseStart = Date.now();
         pauseAudio();
     }
-    if (!isMobile && document.pointerLockElement) {
-        document.exitPointerLock();
-    }
+    if (!isMobile) safeExitPointerLock();
     syncSecretMenuUI();
+    syncMobileControlsDOM();
     modal.classList.add('open');
 }
 
@@ -539,10 +659,12 @@ function closeSecretTestMenu() {
             pausedTime += Date.now() - lastPauseStart;
             lastPauseStart = 0;
         }
-        if (!isMobile && renderer && renderer.domElement) {
-            renderer.domElement.requestPointerLock();
-        }
+        safeRequestPointerLock();
+    } else if (!gameStarted) {
+        // Closing secret menu on the main menu without launching a test run keeps normal modes 100% clean!
+        resetSecretTestOverrides();
     }
+    syncMobileControlsDOM();
 }
 
 function toggleSecretTestMenu() {
@@ -552,7 +674,7 @@ function toggleSecretTestMenu() {
 
 function setNoBotMode(val) {
     noBotMode = !!val;
-    if (noBotMode) sessionUsedTestMode = true;
+    if (noBotMode && gameStarted) sessionUsedTestMode = true;
     if (gameStarted) {
         if (noBotMode) {
             if (kanye && kanye.sprite) kanye.sprite.visible = false;
@@ -587,7 +709,7 @@ function setNoBotMode(val) {
 
 function setTestInfiniteStamina(val) {
     testInfiniteStamina = !!val;
-    if (testInfiniteStamina) {
+    if (testInfiniteStamina && gameStarted) {
         sessionUsedTestMode = true;
         stamina = maxStamina;
         sprintLocked = false;
@@ -601,10 +723,14 @@ function setTestStartFloor(val) {
     testStartFloor = parseInt(val, 10) === 1 ? 1 : 0;
 }
 
-function launchBackroomsTest(mode, startFloor) {
-    setNoBotMode(true);
-    setBackroomsSecondFloor(true);
-    testStartFloor = startFloor === 1 ? 1 : 0;
+function launchBackroomsTest(mode, startFloor, peaceful) {
+    var usePeaceful = peaceful === undefined ? true : !!peaceful;
+    launchingSecretTestRun = true;
+    noBotMode = usePeaceful;
+    testForceSecondFloor = secretTestSecondFloorPref;
+    if (startFloor !== null && startFloor !== undefined) {
+        testStartFloor = startFloor === 1 ? 1 : 0;
+    }
     forceMapNextRun = 'backrooms';
     secretModalOpen = false;
     secretWasPausedBefore = false;
@@ -684,12 +810,13 @@ function resolveSelectedMap() {
         return forced;
     }
     if (saveData.settings.selectedMap === 'park') saveData.settings.selectedMap = 'forest';
-    // Dark Escape never has a map picker unless forced via secret test menu.
-    if (isDarkEscapeMode) {
-        return ['backrooms', 'hospital'][Math.floor(Math.random() * 2)];
-    }
     var pickerOn = saveData.settings.mapPickerEnabled === true;
     var chosen = saveData.settings.selectedMap;
+    if (isDarkEscapeMode) {
+        var darkAllowed = ['backrooms', 'hospital'];
+        if (pickerOn && chosen && chosen !== 'auto' && darkAllowed.indexOf(chosen) !== -1) return chosen;
+        return darkAllowed[Math.floor(Math.random() * darkAllowed.length)];
+    }
     var allowed = getModeAllowedMaps();
     if (pickerOn && chosen && chosen !== 'auto' && allowed.indexOf(chosen) !== -1) return chosen;
 
@@ -901,15 +1028,22 @@ function updateCrosshairSettings() {
 // DETECT MOBILE
 // ==========================================
 function detectMobile() {
-    var naturalMobile = ('ontouchstart' in window) ||
-        (navigator.maxTouchPoints > 0) ||
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    var ua = (navigator && navigator.userAgent) ? navigator.userAgent : '';
+    var uaMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) ||
+        (navigator && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1 && window.innerWidth <= 1366);
+    var coarsePrimary = false;
+    if (window.matchMedia) {
+        try {
+            coarsePrimary = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        } catch (e) {}
+    }
+    var naturalMobile = !!(uaMobile || coarsePrimary);
 
     if (forceInputMode === 'desktop') isMobile = false;
     else if (forceInputMode === 'mobile') isMobile = true;
     else isMobile = naturalMobile;
 
-    document.body.classList.toggle('is-mobile', isMobile);
+    syncMobileControlsDOM();
 }
 
 function setInputMode(mode) {
@@ -917,8 +1051,8 @@ function setInputMode(mode) {
     forceInputMode = mode;
     saveSaveData();
     detectMobile();
+    if (isMobile) setupMobileControls();
     updateUI();
-    if (isMobile && gameStarted) setupMobileControls();
 }
 
 // ==========================================
@@ -1003,7 +1137,7 @@ function updateUI() {
         if (saveData.ownedSkins.includes(skin.id)) div.classList.add('owned');
         if (saveData.selectedSkin === skin.id) div.classList.add('selected');
         var media = skin.url
-            ? '<img src="' + skin.url + '" onerror="this.style.display=\'none\'">'
+            ? '<img src="' + resolveAssetUrl(skin.url) + '" onerror="this.style.display=\'none\'">'
             : '<div style="width:36px;height:36px;background:#333;margin:0 auto;border-radius:4px;display:flex;align-items:center;justify-content:center;">?</div>';
         div.innerHTML = media + '<br><small>' + skin.name + '</small><br>';
         if (skin.desc) {
@@ -1105,9 +1239,7 @@ function updateUI() {
     if (desktopSection) desktopSection.style.display = (inputMode === 'mobile') ? 'none' : '';
     if (mobileSection)  mobileSection.style.display  = (inputMode === 'desktop') ? 'none' : '';
 
-    // Flashlight mobile button: only relevant in Dark Escape mode.
-    var btnFL = document.getElementById('btn-flashlight');
-    if (btnFL) btnFL.style.display = (gameStarted && isDarkEscapeMode) ? 'flex' : 'none';
+    syncMobileControlsDOM();
 
     sprintKeyCode = saveData.settings.sprintKey;
     flashlightKeyCode = saveData.settings.flashlightKey || 'KeyF';
@@ -1115,9 +1247,17 @@ function updateUI() {
     mobileSens = baseSensMob * saveData.settings.mobileSensitivity;
     musicVolMul = saveData.settings.musicVolume / 100;
 
-    var mmVis = saveData.settings.minimapEnabled !== false;
-    document.getElementById('minimap').style.display = mmVis ? 'block' : 'none';
-    document.getElementById('minimap-floor').style.display = mmVis ? 'block' : 'none';
+    if (!gameStarted || (!isEscapeMode && !isEndlessMode && !isChaosMode && !isDarkEscapeMode)) {
+        var mmVis = saveData.settings.minimapEnabled !== false;
+        document.getElementById('minimap').style.display = mmVis ? 'block' : 'none';
+        if (gameStarted && !mmVis && hasSecondFloorActive()) {
+            document.getElementById('minimap-floor').classList.add('standalone');
+            document.getElementById('minimap-floor').style.display = 'block';
+        } else {
+            document.getElementById('minimap-floor').classList.remove('standalone');
+            document.getElementById('minimap-floor').style.display = mmVis ? 'block' : 'none';
+        }
+    }
 
     document.getElementById('escape-record').textContent = 'Best: ' + saveData.escapeRecord + ' escapes';
     document.getElementById('endless-record').textContent = 'Best: ' + (saveData.endlessRecord || 0) + ' doors';
@@ -1402,61 +1542,61 @@ function showAssetWarning(count) {
 
 function loadTextures(callback) {
     var loaded = 0;
-    var failed = 0;
+    var callbackFired = false;
 
-    function checkDone(ok) {
+    function checkDone() {
         loaded++;
-        if (!ok) failed++;
-        if (loaded === 2) callback();
+        if (!callbackFired && loaded >= 2) {
+            callbackFired = true;
+            callback();
+        }
     }
 
     wallTexture = textureLoader.load(
-        'assets/backrooms-wall.jpg',
-        function () { checkDone(true);  _assetProbeDone(false); },
+        resolveAssetUrl('assets/backrooms-wall.jpg'),
+        function () { checkDone(); _assetProbeDone(false); },
         undefined,
-        function () { checkDone(false); _assetProbeDone(true);  }
+        function () { checkDone(); _assetProbeDone(true); }
     );
     wallTexture.wrapS = THREE.RepeatWrapping;
     wallTexture.wrapT = THREE.RepeatWrapping;
 
     floorTexture = textureLoader.load(
-        'assets/backrooms-floor.jpg',
-        function () { checkDone(true);  _assetProbeDone(false); },
+        resolveAssetUrl('assets/backrooms-floor.jpg'),
+        function () { checkDone(); _assetProbeDone(false); },
         undefined,
-        function () { checkDone(false); _assetProbeDone(true);  }
+        function () { checkDone(); _assetProbeDone(true); }
     );
     floorTexture.wrapS = THREE.RepeatWrapping;
     floorTexture.wrapT = THREE.RepeatWrapping;
-    floorTexture.repeat.set(36, 36);
 
-    backroomsCeilTexture = textureLoader.load('assets/backrooms-ceiling.jpg');
+    backroomsCeilTexture = textureLoader.load(resolveAssetUrl('assets/backrooms-ceiling.jpg'));
     backroomsCeilTexture.wrapS = THREE.RepeatWrapping;
     backroomsCeilTexture.wrapT = THREE.RepeatWrapping;
-    backroomsCeilTexture.repeat.set(22, 22);
 
-    backroomsL1WallTexture = textureLoader.load('assets/backrooms-l1-wall.jpg');
+    backroomsL1WallTexture = textureLoader.load(resolveAssetUrl('assets/backrooms-l1-wall.jpg'));
     backroomsL1WallTexture.wrapS = THREE.RepeatWrapping;
     backroomsL1WallTexture.wrapT = THREE.RepeatWrapping;
 
-    backroomsL1FloorTexture = textureLoader.load('assets/backrooms-l1-floor.jpg');
+    backroomsL1FloorTexture = textureLoader.load(resolveAssetUrl('assets/backrooms-l1-floor.jpg'));
     backroomsL1FloorTexture.wrapS = THREE.RepeatWrapping;
     backroomsL1FloorTexture.wrapT = THREE.RepeatWrapping;
 
-    backroomsL1CeilTexture = textureLoader.load('assets/backrooms-l1-ceiling.jpg');
+    backroomsL1CeilTexture = textureLoader.load(resolveAssetUrl('assets/backrooms-l1-ceiling.jpg'));
     backroomsL1CeilTexture.wrapS = THREE.RepeatWrapping;
     backroomsL1CeilTexture.wrapT = THREE.RepeatWrapping;
 
-    crateTexture = textureLoader.load('assets/crate.jpg');
+    crateTexture = textureLoader.load(resolveAssetUrl('assets/crate.jpg'));
     crateTexture.wrapS = THREE.RepeatWrapping;
     crateTexture.wrapT = THREE.RepeatWrapping;
 
     // Probe two extra sprites (not blocking the game start).
-    textureLoader.load('assets/ice.png',
+    textureLoader.load(resolveAssetUrl('assets/ice.png'),
         function () { _assetProbeDone(false); }, undefined,
-        function () { _assetProbeDone(true);  });
-    textureLoader.load('assets/kanye.png',
+        function () { _assetProbeDone(true); });
+    textureLoader.load(resolveAssetUrl('assets/kanye.png'),
         function () { _assetProbeDone(false); }, undefined,
-        function () { _assetProbeDone(true);  });
+        function () { _assetProbeDone(true); });
 }
 
 // ==========================================
@@ -1469,6 +1609,37 @@ function getAudioBufferFromCache(url) {
 function setCachedAudioBuffer(url, buffer) {
     cachedAudioBuffers[url] = buffer;
     return buffer;
+}
+
+async function decodeAudioUrl(url) {
+    var existing = getAudioBufferFromCache(url);
+    if (existing) return existing;
+
+    var clean = url.split('?')[0].split('#')[0];
+    var embedded = (typeof EMBEDDED_ASSETS !== 'undefined' && EMBEDDED_ASSETS) ? EMBEDDED_ASSETS[clean] : null;
+    var isFileProtocol = window.location && window.location.protocol === 'file:';
+
+    if (!isFileProtocol) {
+        try {
+            var resp = await fetch(url);
+            if (resp && resp.ok) {
+                var netBuf = await resp.arrayBuffer();
+                var decodedNet = await audioCtx.decodeAudioData(netBuf);
+                return setCachedAudioBuffer(url, decodedNet);
+            }
+        } catch (netErr) {}
+    }
+
+    if (embedded) {
+        var embBuf = dataUriToArrayBuffer(embedded);
+        var decodedEmb = await audioCtx.decodeAudioData(embBuf);
+        return setCachedAudioBuffer(url, decodedEmb);
+    }
+
+    var fallbackResp = await fetch(url);
+    var fallbackBuf = await fallbackResp.arrayBuffer();
+    var decodedFallback = await audioCtx.decodeAudioData(fallbackBuf);
+    return setCachedAudioBuffer(url, decodedFallback);
 }
 
 // Stops any currently-playing audio/video so a new round begins at the start.
@@ -1541,35 +1712,17 @@ async function initAudio() {
                     skinGainNode.gain.value = 0;
                     skinGainNode.connect(audioCtx.destination);
                 }
-                skinAudioBuffer = getAudioBufferFromCache(skinData.audioUrl);
-                if (!skinAudioBuffer) {
-                    var resp = await fetch(skinData.audioUrl);
-                    var buf = await resp.arrayBuffer();
-                    skinAudioBuffer = await audioCtx.decodeAudioData(buf);
-                    setCachedAudioBuffer(skinData.audioUrl, skinAudioBuffer);
-                }
+                skinAudioBuffer = await decodeAudioUrl(skinData.audioUrl);
                 skinAudioReady = true;
             } catch (e) {
                 console.log('Custom audio failed, using default:', e);
                 kanye.usesCustomAudio = false;
-                audioBuffer = getAudioBufferFromCache('assets/olive.wav');
-                if (!audioBuffer) {
-                    var resp2 = await fetch('assets/olive.wav');
-                    var buf2 = await resp2.arrayBuffer();
-                    audioBuffer = await audioCtx.decodeAudioData(buf2);
-                    setCachedAudioBuffer('assets/olive.wav', audioBuffer);
-                }
+                audioBuffer = await decodeAudioUrl('assets/olive.wav');
                 audioReady = true;
             }
         } else {
             kanye.usesCustomAudio = false;
-            audioBuffer = getAudioBufferFromCache('assets/olive.wav');
-            if (!audioBuffer) {
-                var resp3 = await fetch('assets/olive.wav');
-                var buf3 = await resp3.arrayBuffer();
-                audioBuffer = await audioCtx.decodeAudioData(buf3);
-                setCachedAudioBuffer('assets/olive.wav', audioBuffer);
-            }
+            audioBuffer = await decodeAudioUrl('assets/olive.wav');
             audioReady = true;
         }
     } catch (e) { console.log('Audio init error:', e); }
@@ -2248,23 +2401,23 @@ function getMapMats() {
         var dWallMat, dFloorMat, dCeilMat, dFog;
         var dUpperWallMat = null, dUpperFloorMat = null, dUpperCeilMat = null;
         if (currentMap === 'backrooms') {
-            dWallMat = markShared(new THREE.MeshLambertMaterial({ map: wallTexture, color: 0x353328 }));
-            dFloorMat = markShared(new THREE.MeshLambertMaterial({ map: floorTexture, color: 0x2c2a21 }));
-            dCeilMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsCeilTexture, color: 0x20201d }));
-            dUpperWallMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsL1WallTexture, color: 0x2e3138 }));
-            dUpperFloorMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsL1FloorTexture, color: 0x282b31 }));
-            dUpperCeilMat = markShared(new THREE.MeshLambertMaterial({ map: backroomsL1CeilTexture, color: 0x1a1c21 }));
-            dFog = 0x030304;
+            dWallMat = markShared(new THREE.MeshPhongMaterial({ map: wallTexture, color: 0xb8b29e, specular: 0x060605, shininess: 4 }));
+            dFloorMat = markShared(new THREE.MeshPhongMaterial({ map: floorTexture, color: 0xa6a08d, specular: 0x050504, shininess: 3 }));
+            dCeilMat = markShared(new THREE.MeshPhongMaterial({ map: backroomsCeilTexture, color: 0x949186, specular: 0x050505, shininess: 3 }));
+            dUpperWallMat = markShared(new THREE.MeshPhongMaterial({ map: backroomsL1WallTexture, color: 0xa2a9b6, specular: 0x08090b, shininess: 6 }));
+            dUpperFloorMat = markShared(new THREE.MeshPhongMaterial({ map: backroomsL1FloorTexture, color: 0x969da8, specular: 0x08090b, shininess: 6 }));
+            dUpperCeilMat = markShared(new THREE.MeshPhongMaterial({ map: backroomsL1CeilTexture, color: 0x828994, specular: 0x060709, shininess: 4 }));
+            dFog = 0x040406;
         } else if (currentMap === 'hospital') {
-            dWallMat = markShared(new THREE.MeshLambertMaterial({ color: 0x3a3d45 }));
-            dFloorMat = markShared(new THREE.MeshLambertMaterial({ color: 0x2e3038 }));
-            dCeilMat = markShared(new THREE.MeshLambertMaterial({ color: 0x111219 }));
-            dFog = 0x030304;
+            dWallMat = markShared(new THREE.MeshPhongMaterial({ color: 0xb8bfca, specular: 0x090a0c, shininess: 8 }));
+            dFloorMat = markShared(new THREE.MeshPhongMaterial({ color: 0xa5acb8, specular: 0x08090b, shininess: 8 }));
+            dCeilMat = markShared(new THREE.MeshPhongMaterial({ color: 0x888e99, specular: 0x050506, shininess: 4 }));
+            dFog = 0x040406;
         } else {
-            dWallMat = markShared(new THREE.MeshLambertMaterial({ color: 0x1f2a1f }));
-            dFloorMat = markShared(new THREE.MeshLambertMaterial({ map: getForestGroundTexture(), color: 0x232b23 }));
+            dWallMat = markShared(new THREE.MeshPhongMaterial({ color: 0x4b6b4b, specular: 0x040604, shininess: 3 }));
+            dFloorMat = markShared(new THREE.MeshPhongMaterial({ map: getForestGroundTexture(), color: 0x7d987d, specular: 0x040604, shininess: 3 }));
             dCeilMat = null;
-            dFog = 0x020408;
+            dFog = 0x03050a;
         }
 
         var darkMats = {
@@ -2294,8 +2447,8 @@ function getMapMats() {
         upperWallMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsL1WallTexture }));
         upperFloorMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsL1FloorTexture }));
         upperCeilMat = markShared(new THREE.MeshBasicMaterial({ map: backroomsL1CeilTexture }));
-        fogColor = 0x211e14;
-        upperFogColor = 0x1a1e24;
+        fogColor = 0x2f2a19;
+        upperFogColor = 0x222832;
     } else if (isForestMap()) {
         wallMat = markShared(new THREE.MeshBasicMaterial({ color: 0x3f6f3f }));
         floorMat = markShared(new THREE.MeshBasicMaterial({ map: getForestGroundTexture() }));
@@ -2324,13 +2477,48 @@ function getMapMats() {
     return mats;
 }
 
+function getEndlessChunkMats() {
+    var key = 'endless-' + currentMap;
+    if (MAP_MATS_CACHE[key]) return MAP_MATS_CACHE[key];
+    var base = getMapMats();
+    if (currentMap !== 'backrooms') {
+        MAP_MATS_CACHE[key] = base;
+        return base;
+    }
+    var fClone = floorTexture.clone();
+    fClone.needsUpdate = true;
+    fClone.wrapS = THREE.RepeatWrapping;
+    fClone.wrapT = THREE.RepeatWrapping;
+    fClone.repeat.set(CHUNK_SIZE * 1.5, CHUNK_SIZE * 1.5);
+
+    var cClone = backroomsCeilTexture.clone();
+    cClone.needsUpdate = true;
+    cClone.wrapS = THREE.RepeatWrapping;
+    cClone.wrapT = THREE.RepeatWrapping;
+    cClone.repeat.set(CHUNK_SIZE * 0.5, CHUNK_SIZE * 0.5);
+
+    var endlessMats = {
+        wallMat: base.wallMat,
+        floorMat: markShared(new THREE.MeshBasicMaterial({ map: fClone })),
+        ceilMat: markShared(new THREE.MeshBasicMaterial({ map: cClone })),
+        fogColor: base.fogColor,
+        outdoor: false
+    };
+    MAP_MATS_CACHE[key] = endlessMats;
+    return endlessMats;
+}
+
 // Removes the current world and disposes resources that are not marked as shared/reusable.
+// CRITICAL: Never dispose THREE.Sprite geometry — all THREE.Sprite instances in Three.js r128
+// share one global singleton BufferGeometry! Disposing it deletes every sprite's vertex buffer!
 function clearScene() {
     if (!scene) return;
     forestSky = null;
     scene.traverse(function (obj) {
         if (!obj.isMesh && !obj.isSprite && !obj.isPoints) return;
-        if (obj.geometry && !(obj.geometry.userData && obj.geometry.userData.shared)) obj.geometry.dispose();
+        if (!obj.isSprite && obj.geometry && !(obj.geometry.userData && obj.geometry.userData.shared)) {
+            obj.geometry.dispose();
+        }
         var mats = obj.material ? (Array.isArray(obj.material) ? obj.material : [obj.material]) : [];
         for (var i = 0; i < mats.length; i++) {
             var m = mats[i];
@@ -2339,6 +2527,7 @@ function clearScene() {
     });
     var children = scene.children.slice();
     for (var i = 0; i < children.length; i++) scene.remove(children[i]);
+    if (kanye) kanye.sprite = null;
 }
 
 function ensureAmbientLight() {
@@ -2419,19 +2608,19 @@ function buildGridHorizontalMesh(yLevel, facingUp, material, skipStairHoles, uvP
 
 function buildStaircaseMeshes(dk) {
     var stepMat = dk
-        ? new THREE.MeshLambertMaterial({ map: backroomsL1WallTexture, color: 0x353942 })
+        ? new THREE.MeshPhongMaterial({ map: backroomsL1WallTexture, color: 0x9aa2b0, specular: 0x07080a, shininess: 5 })
         : new THREE.MeshBasicMaterial({ map: backroomsL1WallTexture, color: 0x9aa0a8 });
     var treadMat = dk
-        ? new THREE.MeshLambertMaterial({ map: backroomsL1FloorTexture, color: 0x3e424c })
+        ? new THREE.MeshPhongMaterial({ map: backroomsL1FloorTexture, color: 0xb0b6c2, specular: 0x08090b, shininess: 6 })
         : new THREE.MeshBasicMaterial({ map: backroomsL1FloorTexture, color: 0xb0b5bd });
     var railMat = dk
-        ? new THREE.MeshLambertMaterial({ color: 0x2e343d })
+        ? new THREE.MeshPhongMaterial({ color: 0x6c7583, specular: 0x14161a, shininess: 14 })
         : new THREE.MeshBasicMaterial({ color: 0x5c6470 });
     var safetyMat = dk
-        ? new THREE.MeshLambertMaterial({ color: 0x7c6518 })
+        ? new THREE.MeshPhongMaterial({ color: 0xd4a72c, specular: 0x0c0a04, shininess: 6 })
         : new THREE.MeshBasicMaterial({ color: 0xd4a72c });
     var signMat = dk
-        ? new THREE.MeshBasicMaterial({ color: 0x2b6b58 })
+        ? new THREE.MeshBasicMaterial({ color: 0x2fd190 })
         : new THREE.MeshBasicMaterial({ color: 0x3ddc97 });
 
     var numSteps = 16;
@@ -2550,19 +2739,19 @@ function addBackroomsLevel1Decorations() {
     var m1 = getMazeForFloor(1);
     var blockedSet = {};
     var crateMat = dk
-        ? new THREE.MeshLambertMaterial({ map: crateTexture, color: 0x3b352c })
+        ? new THREE.MeshPhongMaterial({ map: crateTexture, color: 0xa49279, specular: 0x060504, shininess: 4 })
         : new THREE.MeshBasicMaterial({ map: crateTexture });
     var pillarMat = dk
-        ? new THREE.MeshLambertMaterial({ map: backroomsL1WallTexture, color: 0x32353d })
+        ? new THREE.MeshPhongMaterial({ map: backroomsL1WallTexture, color: 0xaab1be, specular: 0x07080a, shininess: 5 })
         : new THREE.MeshBasicMaterial({ map: backroomsL1WallTexture, color: 0xb6bcc4 });
     var stripeMat = dk
-        ? new THREE.MeshLambertMaterial({ color: 0x7c6318 })
+        ? new THREE.MeshPhongMaterial({ color: 0xd4a528, specular: 0x0a0803, shininess: 6 })
         : new THREE.MeshBasicMaterial({ color: 0xd4a528 });
     var pipeMat = dk
-        ? new THREE.MeshLambertMaterial({ color: 0x262b33 })
+        ? new THREE.MeshPhongMaterial({ color: 0x626b78, specular: 0x121418, shininess: 14 })
         : new THREE.MeshBasicMaterial({ color: 0x525a66 });
     var puddleMat = dk
-        ? new THREE.MeshLambertMaterial({ color: 0x16222c, transparent: true, opacity: 0.72 })
+        ? new THREE.MeshPhongMaterial({ color: 0x364d60, specular: 0x22303c, shininess: 28, transparent: true, opacity: 0.72 })
         : new THREE.MeshBasicMaterial({ color: 0x3a4b59, transparent: true, opacity: 0.58 });
 
     var upperCells = walkableCells.filter(function (c) { return (c.floor || 0) === 1; });
@@ -2652,8 +2841,8 @@ function buildWorld() {
         fogNear = 1.0;
         fogFar = 6.0;
     } else {
-        fogNear = mats.outdoor ? 15 : 2;
-        fogFar = mats.outdoor ? 140 : 35;
+        fogNear = mats.outdoor ? 15 : 6;
+        fogFar = mats.outdoor ? 140 : 48;
     }
     scene.fog = new THREE.Fog(mats.fogColor, fogNear, fogFar);
     decorations = [];
@@ -2690,7 +2879,7 @@ function buildWorld() {
         var f0Floor = buildGridHorizontalMesh(0.01, true, mats.floorMat, false, 1.5);
         if (f0Floor) scene.add(f0Floor);
 
-        var f0Ceil = buildGridHorizontalMesh(WALL_H, false, mats.ceilMat, true, 1.0);
+        var f0Ceil = buildGridHorizontalMesh(WALL_H, false, mats.ceilMat, true, 0.5);
         if (f0Ceil) scene.add(f0Ceil);
 
         var m1 = mazeFloors[1];
@@ -2719,27 +2908,28 @@ function buildWorld() {
             scene.add(upperWalls);
         }
 
-        var f1Floor = buildGridHorizontalMesh(SECOND_FLOOR_Y + 0.01, true, mats.upperFloorMat || mats.floorMat, true, 1.25);
+        var f1Floor = buildGridHorizontalMesh(SECOND_FLOOR_Y + 0.01, true, mats.upperFloorMat || mats.floorMat, true, 1.0);
         if (f1Floor) scene.add(f1Floor);
 
-        var f1Ceil = buildGridHorizontalMesh(SECOND_FLOOR_Y + SECOND_WALL_H, false, mats.upperCeilMat || mats.ceilMat, false, 1.0);
+        var f1Ceil = buildGridHorizontalMesh(SECOND_FLOOR_Y + SECOND_WALL_H, false, mats.upperCeilMat || mats.ceilMat, false, 0.5);
         if (f1Ceil) scene.add(f1Ceil);
 
         buildStaircaseMeshes(isDarkEscapeMode);
         addBackroomsLevel1Decorations();
+    } else if (!mats.outdoor) {
+        var singleFloor = buildGridHorizontalMesh(0.01, true, mats.floorMat, false, 1.5);
+        if (singleFloor) scene.add(singleFloor);
+
+        if (mats.ceilMat) {
+            var singleCeil = buildGridHorizontalMesh(WALL_H, false, mats.ceilMat, false, 0.5);
+            if (singleCeil) scene.add(singleCeil);
+        }
     } else {
         var floorSize = GRID_SIZE * CELL;
         var floor = new THREE.Mesh(getFloorGeo(floorSize), mats.floorMat);
         floor.rotation.x = -Math.PI / 2;
         floor.position.y = 0.01;
         scene.add(floor);
-
-        if (!mats.outdoor && mats.ceilMat) {
-            var ceiling = new THREE.Mesh(getFloorGeo(floorSize), mats.ceilMat);
-            ceiling.rotation.x = Math.PI / 2;
-            ceiling.position.y = WALL_H;
-            scene.add(ceiling);
-        }
     }
 
     if (currentMap === 'hospital') addHospitalDecorations();
@@ -2749,10 +2939,7 @@ function buildWorld() {
     if (mats.outdoor) addForestNightSky();
 
     ensureAmbientLight();
-    // Dark Escape keeps almost no ambient light so the flashlight and the short
-    // player glow do the work, but there is enough base light that a wall you
-    // are standing against is never a pure black silhouette.
-    worldAmbientLight.intensity = isDarkEscapeMode ? 0.16 : 0.9;
+    worldAmbientLight.intensity = isDarkEscapeMode ? 0.24 : 0.92;
 }
 
 // ==========================================
@@ -3342,7 +3529,8 @@ function createSpriteFromSkin(skinId, callback) {
     var skinData = SKINS.find(function (s) { return s.id === skinId; });
     if (!skinData) skinData = SKINS[0];
 
-    if (skinData.type === 'video' && skinId === saveData.selectedSkin) {
+    var isFileProto = window.location && window.location.protocol === 'file:';
+    if (skinData.type === 'video' && skinId === saveData.selectedSkin && !isFileProto) {
         var video = document.getElementById('scp-video');
         video.src = skinData.videoUrl;
         video.crossOrigin = 'anonymous';
@@ -3368,30 +3556,13 @@ function createSpriteFromSkin(skinId, callback) {
         sprite.scale.set(2.5, 2.5, 1);
         callback(sprite, true);
     } else {
+        // Synchronous texture handle via getTexture() avoids async race conditions with clearScene()!
         var url = skinData.url || SKINS[0].url;
-
-        function finishSkinSprite(tex) {
-            tex.magFilter = THREE.NearestFilter;
-            tex.minFilter = THREE.NearestFilter;
-            var m = new THREE.SpriteMaterial({ map: tex });
-            var sp = new THREE.Sprite(m);
-            sp.scale.set(2.5, 2.5, 1);
-            callback(sp, false);
-        }
-
-        if (TEXTURE_CACHE[url]) {
-            finishSkinSprite(TEXTURE_CACHE[url]);
-        } else {
-            textureLoader.load(url, function (tex) {
-                TEXTURE_CACHE[url] = tex;
-                finishSkinSprite(tex);
-            }, undefined, function () {
-                textureLoader.load(SKINS[0].url, function (tex) {
-                    TEXTURE_CACHE[url] = tex;
-                    finishSkinSprite(tex);
-                });
-            });
-        }
+        var tex = getTexture(url, true);
+        var m = new THREE.SpriteMaterial({ map: tex, transparent: true });
+        var sp = new THREE.Sprite(m);
+        sp.scale.set(2.5, 2.5, 1);
+        callback(sp, false);
     }
 }
 
@@ -3716,8 +3887,14 @@ function activatePowerup(type) {
 // UPDATE PLAYER
 // ==========================================
 function updatePlayer(dt) {
-    if (isPaused || !pageVisible) return;
-    if (!isLocked && !isMobile) return;
+    if (isPaused || !pageVisible || secretModalOpen) return;
+
+    // Optional keyboard camera look fallback (Arrow keys) works alongside mouse look!
+    var keyTurnRate = (1.6 + (saveData.settings.desktopSensitivity || 5) * 0.14) * dt;
+    if (keys.ArrowLeft) player.yaw += keyTurnRate;
+    if (keys.ArrowRight) player.yaw -= keyTurnRate;
+    if (keys.ArrowUp) player.pitch = Math.min(1.4, player.pitch + keyTurnRate * 0.8);
+    if (keys.ArrowDown) player.pitch = Math.max(-1.4, player.pitch - keyTurnRate * 0.8);
 
     var walkSpeed = 6.0;
     var sprintSpeed = 8.5;
@@ -4464,7 +4641,9 @@ function killPlayer() {
     document.getElementById('death-screen').style.display = 'flex';
 
     stopAudio();
-    if (!isMobile) document.exitPointerLock();
+    if (!isMobile) safeExitPointerLock();
+    mouseDragLook.active = false;
+    syncMobileControlsDOM();
 }
 
 // ==========================================
@@ -4486,18 +4665,21 @@ function togglePause() {
         document.getElementById('pause-fov').value = saveData.settings.fov || 75;
         document.getElementById('pause-fov-d').textContent = saveData.settings.fov || 75;
         pauseAudio();
-        if (!isMobile) document.exitPointerLock();
+        mouseDragLook.active = false;
+        if (!isMobile) safeExitPointerLock();
     } else {
         if (lastPauseStart > 0) { pausedTime += Date.now() - lastPauseStart; lastPauseStart = 0; }
-        if (!isMobile) renderer.domElement.requestPointerLock();
+        safeRequestPointerLock();
     }
+    syncMobileControlsDOM();
 }
 
 function resumeGame() {
     isPaused = false;
     document.getElementById('pause-screen').style.display = 'none';
     if (lastPauseStart > 0) { pausedTime += Date.now() - lastPauseStart; lastPauseStart = 0; }
-    if (!isMobile) renderer.domElement.requestPointerLock();
+    safeRequestPointerLock();
+    syncMobileControlsDOM();
 }
 
 function quitGame() {
@@ -4513,11 +4695,14 @@ function returnToMenu() {
     isEndlessMode = false;
     isChaosMode = false;
     GRID_SIZE = baseGridSize;
+    keys = {};
+    mouseDragLook.active = false;
 
     resetDarkEscapeState();
+    resetSecretTestOverrides();
 
     stopAudio();
-    if (!isMobile) document.exitPointerLock();
+    if (!isMobile) safeExitPointerLock();
 
     document.getElementById('death-screen').style.display = 'none';
     document.getElementById('pause-screen').style.display = 'none';
@@ -4536,6 +4721,7 @@ function returnToMenu() {
     }
 
     updateTestBadgeUI();
+    syncMobileControlsDOM();
     clearScene();
     chaosNextbots = [];
     endlessChunks.clear();
@@ -4641,11 +4827,14 @@ function applyGameVersion() {
 }
 
 function init() {
-    detectMobile();
     loadSaveData();
     forceInputMode = saveData.settings.inputMode || 'auto';
     detectMobile();
+    updateUI();
     applyGameVersion();
+
+    // Protect Three.js r128's singleton THREE.Sprite BufferGeometry from EVER being disposed!
+    markShared((new THREE.Sprite()).geometry);
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a1a);
@@ -4688,7 +4877,10 @@ function init() {
         // Secret "olive" key sequence opens/closes the Developer & No-Bot Test Menu!
         if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && e.key && e.key.length === 1) {
             var activeTag = document.activeElement && document.activeElement.tagName;
-            if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
+            if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA' && activeTag !== 'SELECT') {
+                var nowKeyTs = Date.now();
+                if (nowKeyTs - lastSecretKeyTime > 2500) secretKeyBuffer = '';
+                lastSecretKeyTime = nowKeyTs;
                 secretKeyBuffer = (secretKeyBuffer + e.key.toLowerCase()).slice(-8);
                 if (secretKeyBuffer.slice(-5) === 'olive') {
                     secretKeyBuffer = '';
@@ -4715,7 +4907,10 @@ function init() {
                 isSprinting = true;
             }
         }
-        if (e.code === 'Space') e.preventDefault();
+        if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown' ||
+            e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+            if (gameStarted && !isDead && !isPaused) e.preventDefault();
+        }
         if (e.code === flashlightKeyCode && gameStarted && !isDead && !isPaused) {
             e.preventDefault();
             toggleFlashlight();
@@ -4733,19 +4928,58 @@ function init() {
         }
     });
 
+    document.addEventListener('mousedown', function (e) {
+        if (!gameStarted || isDead || isPaused || secretModalOpen || isMobile) return;
+        if (e.button === 0) {
+            mouseDragLook.active = true;
+            mouseDragLook.lastX = e.clientX;
+            mouseDragLook.lastY = e.clientY;
+        }
+    });
+
+    document.addEventListener('mouseup', function () {
+        mouseDragLook.active = false;
+    });
+
+    window.addEventListener('blur', function () {
+        keys = {};
+        mouseDragLook.active = false;
+        if (saveData.settings.sprintMode !== 'toggle') isSprinting = false;
+    });
+
     document.addEventListener('mousemove', function (e) {
-        if (!isLocked || !gameStarted || isDead || isPaused) return;
-        player.yaw -= e.movementX * mouseSens;
-        player.pitch -= e.movementY * mouseSens;
-        player.pitch = Math.max(-1.4, Math.min(1.4, player.pitch));
+        if (!gameStarted || isDead || isPaused || secretModalOpen || isMobile) return;
+        if (isLocked) {
+            player.yaw -= (e.movementX || 0) * mouseSens;
+            player.pitch -= (e.movementY || 0) * mouseSens;
+            player.pitch = Math.max(-1.4, Math.min(1.4, player.pitch));
+            return;
+        }
+        if (mouseDragLook.active && ((e.buttons === undefined) || (e.buttons & 1))) {
+            var dx = (typeof e.movementX === 'number' && e.movementX !== 0 && Math.abs(e.movementX) < 300)
+                ? e.movementX
+                : (e.clientX - mouseDragLook.lastX);
+            var dy = (typeof e.movementY === 'number' && e.movementY !== 0 && Math.abs(e.movementY) < 300)
+                ? e.movementY
+                : (e.clientY - mouseDragLook.lastY);
+            mouseDragLook.lastX = e.clientX;
+            mouseDragLook.lastY = e.clientY;
+            player.yaw -= dx * mouseSens * 1.35;
+            player.pitch -= dy * mouseSens * 1.35;
+            player.pitch = Math.max(-1.4, Math.min(1.4, player.pitch));
+        }
     });
 
     document.addEventListener('pointerlockchange', function () {
-        isLocked = document.pointerLockElement === renderer.domElement;
+        isLocked = renderer && document.pointerLockElement === renderer.domElement;
+        if (isLocked) mouseDragLook.active = false;
+        updateLookHintUI();
     });
 
     renderer.domElement.addEventListener('click', function () {
-        if (gameStarted && !isDead && !isPaused && !isMobile) renderer.domElement.requestPointerLock();
+        if (gameStarted && !isDead && !isPaused && !secretModalOpen && !isMobile) {
+            safeRequestPointerLock();
+        }
     });
 
     window.addEventListener('resize', function () {
@@ -4755,6 +4989,7 @@ function init() {
     });
 
     if (isMobile) setupMobileControls();
+    syncMobileControlsDOM();
 
     renderCH();
     buildCHShapes();
@@ -5141,9 +5376,10 @@ function restartGame() {
     document.querySelectorAll('.powerup-slot').forEach(function (s) { s.classList.remove('active'); });
 
     resetSprintState();
+    syncMobileControlsDOM();
 
     initAudio();
-    if (!isMobile) renderer.domElement.requestPointerLock();
+    safeRequestPointerLock();
 }
 
 // ==========================================

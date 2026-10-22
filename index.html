@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Olive Delights</title>
-<link rel="stylesheet" href="styles.css?v=27c">
+<link rel="stylesheet" href="styles.css?v=27d">
 </head>
 <body>
 <!-- ==================== START SCREEN ==================== -->
 <div id="start-screen" class="menu-overlay">
     <h1>🫒 OLIVE DELIGHTS 🫒</h1>
     <h2>Escape the Nextbot</h2>
-    <div id="game-version-badge">Version <span id="game-version">2.7.3</span></div>
+    <div id="game-version-badge">Version <span id="game-version">2.7.4</span></div>
     <!-- Asset load failure banner — hidden until assets fail -->
     <div id="asset-warning" style="display:none; background:rgba(200,60,30,0.92); border:2px solid #ff6644; border-radius:8px; padding:10px 14px; margin:8px 0; max-width:420px; text-align:center; font-size:13px; color:#fff;">
         ⚠️ <strong><span id="asset-warn-count">1</span> asset(s) failed to load.</strong><br>
@@ -348,9 +348,10 @@
     <!-- CHANGELOG / VERSION -->
     <div class="menu-section changelog-section">
         <details id="changelog">
-            <summary>📜 CHANGELOG <span id="changelog-version">v2.7.3</span></summary>
+            <summary>📜 CHANGELOG <span id="changelog-version">v2.7.4</span></summary>
             <div id="changelog-body">
                 <ul>
+                    <li><strong>v2.7.4</strong> — Fixed desktop vs mobile input detection, added zero-failure embedded local asset bundle for offline/file:// play, fixed Dark Escape per-pixel lighting &amp; Backrooms UV scaling, isolated secret test menu from normal modes, and added pointer-lock fallback look controls.</li>
                     <li><strong>v2.7.3</strong> — Added optional Backrooms 2nd floor (Level 1: Habitable Zone), authentic Level 0 &amp; Level 1 local repo assets, bundled all game assets locally, and added secret test mode.</li>
                     <li><strong>v2.7.2</strong> — Added Creepy Ye skin, fixed powerup left-wall clustering, corrected flashlight life upgrade, updated battery URL, and added asset-load failure notice.</li>
                     <li><strong>v2.7.1</strong> — Fixed escape door in path, added battery powerup + two upgrades, extreme keys one-at-a-time, flashlight button hidden outside Dark Escape, sensitivity sliders filtered by input mode.</li>
@@ -405,6 +406,7 @@
     <div id="timer">0:00</div>
     <div id="hud-coins">💰 0</div>
     <div id="test-mode-badge">🧪 PEACEFUL TEST · NO BOT</div>
+    <div id="look-hint">🖱️ Click to lock mouse · Drag mouse or Arrow keys to look</div>
     <div id="minimap"><canvas id="minimap-canvas"></canvas></div>
     <div id="minimap-floor">Map: Backrooms</div>
     <div id="pickup-msg"></div>
@@ -480,10 +482,10 @@
 <div id="secret-test-modal">
     <div class="secret-modal-card">
         <h2>🫒 SECRET TEST MENU 🫒</h2>
-        <div class="secret-modal-sub">Unlocked via secret key code <strong>"olive"</strong> (type again or ESC to close)</div>
+        <div class="secret-modal-sub">Unlocked via secret key code <strong>"olive"</strong> · Scoped strictly to test runs (normal modes stay 100% normal)</div>
 
         <div class="menu-section" style="width:100%; margin:6px 0;">
-            <h3>🧪 TESTING OPTIONS</h3>
+            <h3>🧪 TEST RUN OPTIONS</h3>
             <div class="settings-row">
                 <label>Peaceful / No Bot Chase:</label>
                 <label class="toggle-switch">
@@ -492,9 +494,9 @@
                 </label>
             </div>
             <div class="settings-row">
-                <label>Backrooms 2nd Floor (Lv1):</label>
+                <label>Test 2nd Floor (Lv1):</label>
                 <label class="toggle-switch">
-                    <input type="checkbox" id="secret-2f-toggle" class="backrooms-2f-checkbox" onchange="setBackroomsSecondFloor(this.checked)">
+                    <input type="checkbox" id="secret-2f-toggle" checked onchange="setSecretTestSecondFloor(this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
             </div>
@@ -515,12 +517,13 @@
         </div>
 
         <div class="menu-section" style="width:100%; margin:6px 0;">
-            <h3>🚀 QUICK TEST BACKROOMS</h3>
+            <h3>🚀 LAUNCH BACKROOMS TEST (ISOLATED FROM NORMAL PLAY)</h3>
             <div class="secret-btn-grid">
-                <button class="menu-btn small green" onclick="launchBackroomsTest('play', 0)">▶ Explore Lv0 + Lv1 (No Bot)</button>
-                <button class="menu-btn small teal" onclick="launchBackroomsTest('play', 1)">▶ Spawn on Floor 2 (No Bot)</button>
-                <button class="menu-btn small" onclick="launchBackroomsTest('escape', 0)">🚪 Escape 2F (No Bot)</button>
-                <button class="menu-btn small dark" onclick="launchBackroomsTest('darkescape', 0)">🔦 Dark Escape 2F (No Bot)</button>
+                <button class="menu-btn small green" onclick="launchBackroomsTest('play', 0, true)">▶ Explore Lv0 + Lv1 (No Bot)</button>
+                <button class="menu-btn small teal" onclick="launchBackroomsTest('play', 1, true)">▶ Spawn on Floor 2 (No Bot)</button>
+                <button class="menu-btn small" onclick="launchBackroomsTest('escape', 0, true)">🚪 Escape 2F (No Bot)</button>
+                <button class="menu-btn small dark" onclick="launchBackroomsTest('darkescape', 0, true)">🔦 Dark Escape 2F (No Bot)</button>
+                <button class="menu-btn small teal" onclick="launchBackroomsTest('play', null, false)">🤖 Test Backrooms 2F WITH Bot</button>
             </div>
         </div>
 
@@ -559,12 +562,13 @@
 <!-- Hidden video for SCP skin -->
 <video id="scp-video" loop muted playsinline style="display:none;"></video>
 
-<script src="js/three.min.js?v=27c"></script>
-<script src="js/mode-normal.js?v=27c"></script>
-<script src="js/mode-escape.js?v=27c"></script>
-<script src="js/mode-endless.js?v=27c"></script>
-<script src="js/mode-chaos.js?v=27c"></script>
-<script src="js/mode-darkescape.js?v=27c"></script>
-<script src="js/core.js?v=27c"></script>
+<script src="js/three.min.js?v=27d"></script>
+<script src="js/assets-data.js?v=27d"></script>
+<script src="js/mode-normal.js?v=27d"></script>
+<script src="js/mode-escape.js?v=27d"></script>
+<script src="js/mode-endless.js?v=27d"></script>
+<script src="js/mode-chaos.js?v=27d"></script>
+<script src="js/mode-darkescape.js?v=27d"></script>
+<script src="js/core.js?v=27d"></script>
 </body>
 </html>

@@ -396,6 +396,21 @@ button.capturing {
     display: none;
     text-shadow: 0 0 6px #000;
 }
+#look-hint {
+    position: absolute;
+    bottom: 42px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+    display: none;
+    pointer-events: none;
+}
 #secret-test-modal {
     position: fixed;
     top: 0; left: 0;
@@ -597,8 +612,16 @@ body.is-mobile #darkescape-controls { bottom: 156px; font-size: clamp(9px, 2vw, 
 #btn-flashlight.active { background: rgba(120, 200, 255, 0.55); }
 #btn-pause { top: 15px; right: 15px; width: 42px; height: 42px; font-size: 18px; position: fixed; z-index: 160; }
 
-body.is-mobile #mobile-controls { display: block; }
-body.is-mobile .mobile-btn { display: flex; }
+body:not(.is-mobile) #mobile-controls,
+body:not(.is-mobile) .mobile-btn,
+body:not(.is-mobile) #btn-pause,
+body:not(.is-mobile) #btn-flashlight {
+    display: none !important;
+}
+body.is-mobile.in-active-game #mobile-controls { display: block; }
+body.is-mobile.in-active-game .mobile-btn { display: flex; }
+body.is-mobile.in-active-game #btn-flashlight { display: none; }
+body.is-mobile.in-active-game.is-dark-escape #btn-flashlight { display: flex; }
 body.is-mobile #stamina-container { bottom: 80px; }
 body.is-mobile #powerups-display { bottom: 95px; }
 body.is-mobile .menu-section p { font-size: 11px; }
